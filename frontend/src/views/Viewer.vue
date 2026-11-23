@@ -3,17 +3,20 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { SBadge, SButton, SDialog, SSpinner, STextArea } from '@syntrofic/ui'
 import { ArrowDownToLine, ChevronLeft, ChevronRight, ImageOff, Scan, Trash2, X, ZoomIn } from 'lucide-vue-next'
-import { account, albumPath, errorText, mediaPath, pathSegment, photoPath, query, request, type Album, type Photo } from '../api'
+import { account, albumPath, errorText, mediaPath, pathSegment, photoPath, query, request, visibleCaption, type Album, type Photo } from '../api'
 import Notice from '../components/Notice.vue'
+import PublicLightbox from '../components/PublicLightbox.vue'
 
 const route = useRoute()
 const router = useRouter()
 const album = ref<Album>()
 const photo = ref<Photo>()
+const caption = computed(() => visibleCaption(photo.value))
 const id = computed(() => String(route.params.imageId))
 const albumId = computed(() => route.params.albumId ? String(route.params.albumId) : undefined)
 const base = computed(() => albumId.value ? photoPath(albumId.value, id.value) : `/library/images/${pathSegment(id.value)}`)
 const publicView = computed(() => route.query.portfolio === '1' || !account.session.actor)
+const publicSelection = computed(() => publicView.value && albumId.value ? { albumId: albumId.value, imageId: id.value } : undefined)
 const parent = computed(() => {
   if (route.query.from === 'home') return { path: '/' }
   if (route.query.from === 'works') return { path: '/photos', query: route.query.album ? { album: route.query.album } : {} }
@@ -80,7 +83,7 @@ function navigate(target?: string | null) {
   if (target && albumId.value) void router.replace({ path: photoPath(albumId.value, target), query: route.query })
 }
 function onKey(event: KeyboardEvent) {
-  if (editing.value || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
+  if (publicSelection.value || editing.value || event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return
   if (event.key === 'ArrowLeft' && photo.value?.previous_image_id) { event.preventDefault(); navigate(photo.value.previous_image_id) }
   if (event.key === 'ArrowRight' && photo.value?.next_image_id) { event.preventDefault(); navigate(photo.value.next_image_id) }
   if (event.key === 'Escape') void router.replace(parent.value)
@@ -117,14 +120,15 @@ async function moveToTrash() {
   } catch (failure) { error.value = errorText(failure) }
   finally { busy.value = false }
 }
-watch(() => route.path, () => void load())
-watch(() => account.event, () => { if (!editing.value && !busy.value) void load(true) })
-onMounted(() => { void load(); window.addEventListener('keydown', onKey) })
+watch([() => route.path, publicSelection], () => { if (!publicSelection.value) void load() })
+watch(() => account.event, () => { if (!publicSelection.value && !editing.value && !busy.value) void load(true) })
+onMounted(() => { if (!publicSelection.value) void load(); window.addEventListener('keydown', onKey) })
 onUnmounted(() => { window.removeEventListener('keydown', onKey); loader?.abort() })
 </script>
 
 <template>
-  <section class="viewer stack">
+  <PublicLightbox v-if="publicSelection" :selection="publicSelection" :return-to="parent" />
+  <section v-else class="viewer stack">
     <div class="viewer-top">
       <RouterLink :to="parent" class="inline-action"><X :size="18" aria-hidden="true" />关闭查看器</RouterLink>
       <div class="actions" v-if="photo">
@@ -139,7 +143,7 @@ onUnmounted(() => { window.removeEventListener('keydown', onKey); loader?.abort(
     <template v-if="photo">
       <div class="viewer-stage" :class="{ zoomed: zoom }">
         <img v-if="imageUrl" :srcset="srcset" :src="imageUrl" sizes="(max-width: 759px) 100vw, calc(100vw - 285px)"
-          :alt="photo.caption?.source === 'human' ? photo.caption.text : publicView ? '照片' : photo.display_name" @error="imageError" />
+          :alt="caption?.source === 'human' ? caption.text : publicView ? '照片' : photo.display_name" @error="imageError" />
         <div v-else class="viewer-placeholder"><ImageOff :size="38" :stroke-width="1.25" /><p>预览尚未生成</p></div>
       </div>
       <div class="viewer-caption">
@@ -156,10 +160,10 @@ onUnmounted(() => { window.removeEventListener('keydown', onKey); loader?.abort(
           </template>
         </div>
       </div>
-      <div v-if="photo.caption || owner || (!publicView && album?.capabilities.edit)" class="panel form-stack">
-        <div class="title-row"><h2>照片描述</h2><SButton v-if="owner || (!publicView && album?.capabilities.edit)" variant="secondary" @click="draft = photo.caption?.text || ''; editing = true">编辑描述</SButton></div>
-        <SBadge v-if="photo.caption?.source === 'model'" class="fit">AI 生成</SBadge>
-        <p v-if="photo.caption" class="preserve">{{ photo.caption.text }}</p>
+      <div v-if="caption || owner || (!publicView && album?.capabilities.edit)" class="panel form-stack">
+        <div class="title-row"><h2>照片描述</h2><SButton v-if="owner || (!publicView && album?.capabilities.edit)" variant="secondary" @click="draft = caption?.text || ''; editing = true">编辑描述</SButton></div>
+        <SBadge v-if="caption?.source === 'model'" class="fit">AI 生成</SBadge>
+        <p v-if="caption" class="preserve">{{ caption.text }}</p>
       </div>
       <SDialog v-model:open="trashOpen" title="移入回收站" dismiss-label="关闭">
         <div class="form-stack"><p>照片会从所有相册中隐藏，可在回收站恢复。</p><Notice :error="error" />

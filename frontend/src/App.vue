@@ -73,6 +73,7 @@ watch([ready, () => account.initialized, () => actor.value, () => route.fullPath
   else if (!actor.value && (route.meta.auth || route.meta.owner)) {
     void router.replace({ path: '/login', query: { next: route.fullPath } })
   } else if (route.meta.owner && !isOwner.value) void router.replace('/admin/unavailable')
+  else if (route.meta.ai && !account.capabilities?.ai_enabled) void router.replace('/albums')
 }, { flush: 'sync' })
 watch(() => [actor.value?.id, account.session.event_cursor, passwordChange.value], connect)
 onMounted(start)
@@ -126,7 +127,7 @@ onUnmounted(() => { events?.close(); if (queued) clearTimeout(queued) })
     </nav>
     <main id="gallery-content" class="workspace" tabindex="-1">
       <Notice :error="error" />
-      <RouterView :key="actor?.id || 'visitor'" />
+      <RouterView v-if="!route.meta.ai || account.capabilities?.ai_enabled" :key="actor?.id || 'visitor'" />
     </main>
   </div>
 </template>

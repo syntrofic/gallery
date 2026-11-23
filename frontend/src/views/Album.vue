@@ -6,12 +6,16 @@ import { ArrowDown, ArrowDownToLine, ArrowUp, CloudUpload, ImagePlus, Images, Se
 import { account, albumPath, ApiError, commandKey, errorText, photoPath, query, request, type Album, type Operation, type Page, type Photo } from '../api'
 import Notice from '../components/Notice.vue'
 import PhotoTile from '../components/PhotoTile.vue'
+import PublicLightbox from '../components/PublicLightbox.vue'
+import PublicPhotoGrid from '../components/PublicPhotoGrid.vue'
+import { galleryPhoto } from '../galleryPhoto'
 
 const route = useRoute()
 const router = useRouter()
 const id = computed(() => String(route.params.albumId))
 const base = computed(() => albumPath(id.value))
 const publicView = computed(() => route.query.portfolio === '1' || !account.session.actor)
+const selection = computed(() => publicView.value ? galleryPhoto(route, id.value) : undefined)
 const isManage = computed(() => route.path.endsWith('/manage'))
 const owner = computed(() => account.session.actor?.role === 'owner')
 const album = ref<Album>()
@@ -205,7 +209,7 @@ onUnmounted(() => { controller?.abort(); mediaQuery.removeEventListener('change'
 </script>
 
 <template>
-  <section class="stack">
+  <section class="stack" :class="{ 'public-album': publicView }">
     <div class="breadcrumbs"><RouterLink :to="publicView ? '/' : '/albums'">相册</RouterLink><span>/</span><span>{{ album?.name || '详情' }}</span></div>
     <div v-if="loading && !album" class="loading" role="status"><SSpinner /> 正在加载相册</div>
     <Notice :error="error" :message="message" />
@@ -292,15 +296,16 @@ onUnmounted(() => { controller?.abort(); mediaQuery.removeEventListener('change'
           </li>
         </ul>
       </div>
-      <div v-if="images.length" class="photos-grid">
+      <PublicPhotoGrid v-if="publicView && images.length" :photos="images" :album-id="id" />
+      <div v-else-if="images.length" class="photos-grid">
         <article v-for="(photo, index) in images" :key="photo.id" class="photo-card">
           <button v-if="selecting" type="button" class="image-select" :aria-pressed="chosen.includes(photo.id)" @click="toggle(photo.id)">
             <PhotoTile :photo="photo" :album="id" :label="photo.display_name" :eager="index < 4" />
             <span class="item-name">{{ photo.display_name }}</span>
           </button>
-          <RouterLink v-else :to="{ path: photoPath(id, photo.id), query: route.query }" :aria-label="publicView ? photo.display_name : undefined">
+          <RouterLink v-else :to="{ path: photoPath(id, photo.id), query: route.query }">
             <PhotoTile :photo="photo" :album="id" :label="photo.display_name" :eager="index < 4" />
-            <span v-if="!publicView" class="item-name">{{ photo.display_name }}</span>
+            <span class="item-name">{{ photo.display_name }}</span>
           </RouterLink>
           <div v-if="isManage && album.capabilities.edit && sort === 'manual' && !filter" class="sort-controls">
             <SButton variant="ghost" size="sm" :disabled="!index || busy" :aria-label="`上移 ${photo.display_name}`" @click="shift(index, -1)"><ArrowUp :size="15" /></SButton>
@@ -325,4 +330,5 @@ onUnmounted(() => { controller?.abort(); mediaQuery.removeEventListener('change'
       </div>
     </SDialog>
   </section>
+  <PublicLightbox v-if="selection" :selection="selection" />
 </template>

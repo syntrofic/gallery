@@ -47,12 +47,13 @@ const busy = ref(false)
 const loading = ref(false)
 const error = ref('')
 const message = ref('')
-const limitFields = [
+const allLimitFields = [
   { key: 'max_upload_items', label: '每批上传上限' },
   { key: 'upload_concurrency_hint', label: '并行上传数' },
   { key: 'max_download_selection', label: '原图领取上限' },
   { key: 'ai_daily_token_budget', label: '每日 AI Token 预算' },
 ] as const
+const limitFields = computed(() => allLimitFields.filter(field => field.key !== 'ai_daily_token_budget' || settings.value?.ai.enabled))
 const tmpLimits = ref<Record<string, number>>({})
 const backendKind = ref<'local' | 's3' | 'web_dav'>('local')
 const backend = ref({ root: '', endpoint: '', bucket: '', region: 'us-east-1', prefix: '', access_key: '',
@@ -67,7 +68,7 @@ async function load() {
     if (['general','limits','storage'].includes(page.value)) {
       settings.value = await request<Settings>('/admin/settings')
       if (page.value === 'general') presentation.value = { ...account.presentation }
-      tmpLimits.value = Object.fromEntries(limitFields.map(field => [field.key, settings.value!.limits[field.key]]))
+      tmpLimits.value = Object.fromEntries(limitFields.value.map(field => [field.key, settings.value!.limits[field.key]]))
     } else if (page.value === 'users') users.value = (await request<Page<User>>('/admin/users')).items
     else if (page.value === 'images') profile.value = await request<Profile>('/variant-profiles/current')
     else if (page.value === 'audit') audit.value = (await request<Page<typeof audit.value[number]>>('/admin/audit')).items
@@ -218,7 +219,7 @@ onMounted(load)
         <SButton type="submit" :loading="busy" class="fit">保存公开资料</SButton>
       </form>
       <section class="panel stack"><h2>存储</h2><p>{{ settings.storage.kind }}</p><RouterLink to="/settings/storage" class="subtle-link">查看存储配置</RouterLink></section>
-      <section class="panel stack"><h2>图库助手</h2><SBadge :tone="settings.ai.enabled ? 'success' : 'neutral'" class="fit">{{ settings.ai.enabled ? '已启用' : '未启用' }}</SBadge><p v-if="!settings.ai.enabled" class="page-meta">通过服务端配置启用 AI。</p><RouterLink v-else to="/agent" class="subtle-link">打开图库助手</RouterLink></section>
+      <section v-if="settings.ai.enabled" class="panel stack"><h2>图库助手</h2><SBadge tone="success" class="fit">已启用</SBadge><RouterLink to="/agent" class="subtle-link">打开图库助手</RouterLink></section>
       <section class="panel stack"><h2>备份</h2><RouterLink to="/settings/backups" class="subtle-link">查看快照、演练和异地副本</RouterLink></section>
     </div>
     <form v-else-if="page === 'limits' && settings" class="panel form-stack narrow" @submit.prevent="saveLimits">

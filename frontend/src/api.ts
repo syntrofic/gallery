@@ -104,6 +104,11 @@ export const account = reactive({
   event: 0,
 })
 
+export function visibleCaption(photo?: Photo) {
+  const caption = photo?.caption
+  return caption?.source === 'model' && !account.capabilities?.ai_enabled ? undefined : caption
+}
+
 export function commandKey() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), part => part.toString(16).padStart(2, '0')).join('')
 }

@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test'
 
 const password = process.env.GALLERY_TEST_PASSWORD || 'gallery-browser-test-26'
 const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAACAAAAAYCAIAAAAUMWhjAAAAbElEQVR4nLXCERvCAABF0YfDMByGYTgMh2HwIBwOw2EYhuEwur+tX3HPd5LiHoo6h6LOsagzFnVORZ1zUedS1JmKOteizlzUuRV17kWdR1FnKeqsRZ1nUWcr6ryKOu+izqeo8y3q7EWdX1H/AfTSej16KIgMAAAAAElFTkSuQmCC', 'base64')
+const portrait = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABgAAAAoCAIAAABrb60CAAAAk0lEQVR4nK3CjVkBAABF0Tffm+MOkVQUFSHkL0Wtaol7vpO7osygKHNflBkWZR6KMo9FmaeizKgoMy7KPBdlXooyk6LMtCjzWpR5K8q8F2VmRZl5UeajKLMoyiyLMquizGdRZl2U2RRltkWZr6LMriizL8ocijLHosypKPNdlDkXZX6KMr9FmUtR5lqU+SvK/BflDV90l92E+4qqAAAAAElFTkSuQmCC', 'base64')
 
 async function login(page: Page) {
   await page.goto('/login')
@@ -19,16 +20,20 @@ async function seedPhoto(page: Page, album: string) {
   const made = await page.request.post('/api/v1/albums', { headers, data: { name: album } })
   expect(made.ok()).toBeTruthy()
   const { id } = await made.json() as { id: string }
+  return { id, imageId: await addPhoto(page, headers, id, '测试照片.png', image) }
+}
+
+async function addPhoto(page: Page, headers: Record<string, string>, id: string, name: string, body: Buffer) {
   const batch = await page.request.post(`/api/v1/albums/${id}/uploads`, {
-    headers, data: { items: [{ client_item_id: 'browser-fixture', name: '测试照片.png', size: image.byteLength }] },
+    headers, data: { items: [{ client_item_id: 'browser-fixture', name, size: body.byteLength }] },
   })
   expect(batch.ok()).toBeTruthy()
   const selected = await batch.json()
   const put = await page.request.put(`/api/v1/uploads/${selected.id}/items/${selected.items[0].upload_item_id}/body`, {
-    headers: { ...headers, 'content-type': 'image/png' }, data: image,
+    headers: { ...headers, 'content-type': 'image/png' }, data: body,
   })
   expect(put.ok(), await put.text()).toBeTruthy()
-  return { id, imageId: (await put.json()).image_id as string }
+  return (await put.json()).image_id as string
 }
 
 test('desktop creates, uploads, opens previews and downloads the original ZIP', async ({ page }, info) => {
@@ -118,12 +123,17 @@ test('served assets have immutable caching and API misses stay non-HTML', async 
   expect((await request.get('/assets/missing.css')).status()).toBe(404)
 })
 
-test('a white public portfolio exposes only published albums and works', async ({ page, browser }, info) => {
-  test.skip(info.project.name !== 'desktop')
+test('the public portfolio follows system appearance and opens an accessible lightbox over dense uncropped photos', async ({ page, browser }, info) => {
   await login(page)
   const publicAlbum = await seedPhoto(page, '公开作品相册')
   const token = (await (await page.request.get('/api/v1/session')).json()).csrf_token
   const headers = { 'x-csrf-token': token }
+  const capabilities = await page.request.get('/api/v1/capabilities')
+  expect((await capabilities.json()).ai_enabled).toBe(false)
+  const scan = await page.request.post('/api/v1/ai/scans', { headers, data: { scope: {} } })
+  expect(scan.status()).toBe(503)
+  expect((await scan.json()).code).toBe('FEATURE_GATED')
+  const portraitId = await addPhoto(page, headers, publicAlbum.id, '测试竖图.png', portrait)
   const hidden = await page.request.post('/api/v1/albums', { headers, data: { name: '未公开的手稿' } })
   expect(hidden.ok()).toBeTruthy()
   const hiddenAlbum = await hidden.json()
@@ -135,45 +145,82 @@ test('a white public portfolio exposes only published albums and works', async (
   })
   expect(shown.ok(), await shown.text()).toBeTruthy()
   await page.goto('/settings/general')
+  await expect(page.getByRole('heading', { name: '图库助手' })).toHaveCount(0)
   await page.getByLabel('画廊名称').fill('测试作品集')
   await page.getByLabel('简介').fill('一组公开作品。')
   await page.getByRole('button', { name: '保存公开资料' }).click()
   await expect(page.getByText('公开画廊资料已保存。')).toBeVisible()
+  await page.goto('/settings/limits')
+  await expect(page.getByLabel('每批上传上限')).toBeVisible()
+  await expect(page.getByLabel('每日 AI Token 预算')).toHaveCount(0)
+  await page.goto('/agent')
+  await expect(page).toHaveURL(/\/albums$/)
 
-  const visitor = await browser.newPage({ baseURL: new URL(page.url()).origin, colorScheme: 'dark' })
+  const visitor = await browser.newPage({
+    baseURL: new URL(page.url()).origin, colorScheme: 'dark',
+    isMobile: info.project.name === 'mobile', hasTouch: info.project.name === 'mobile',
+    viewport: info.project.name === 'mobile' ? { width: 390, height: 844 } : { width: 1280, height: 900 },
+  })
   try {
     const originals: string[] = []
     visitor.on('request', request => { if (/original-(view|download)$/.test(request.url())) originals.push(request.url()) })
     await visitor.goto('/')
     await expect(visitor.getByRole('heading', { name: '测试作品集', level: 1 })).toBeVisible()
+    await expect(visitor.locator('.public-shell')).toHaveCSS('background-color', 'rgb(18, 19, 20)')
     const collection = visitor.locator(`a[href^="/albums/${publicAlbum.id}?"]`)
     await expect(collection).toBeVisible()
     const featured = visitor.locator('.portfolio-feature')
     await expect(featured.locator('img')).toBeVisible()
     await featured.click()
-    await expect(visitor.locator('.viewer-stage img')).toBeVisible()
-    await visitor.getByRole('link', { name: '关闭查看器' }).click()
+    const lightbox = visitor.getByRole('dialog', { name: '照片查看器' })
+    await expect(lightbox.locator('img.is-ready')).toBeVisible()
+    await expect(lightbox).toHaveCSS('background-color', 'rgb(18, 19, 20)')
+    await visitor.emulateMedia({ colorScheme: 'light' })
+    await expect(lightbox).toHaveCSS('background-color', 'rgb(255, 255, 255)')
+    await expect(lightbox.locator('img.is-ready')).toBeVisible()
+    await lightbox.getByRole('button', { name: '关闭查看器' }).click()
     await expect(visitor).toHaveURL(/\/$/)
     await expect(visitor.getByText('未公开的手稿')).toHaveCount(0)
     await expect(visitor.getByRole('link', { name: '管理' })).toHaveAttribute('href', '/admin')
     expect(await visitor.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(255, 255, 255)')
     await collection.click()
+    await visitor.setViewportSize({ width: 390, height: 360 })
     const albumTile = visitor.getByRole('link', { name: '测试照片.png' })
     await expect(albumTile.locator('img')).toBeVisible()
+    const portraitTile = visitor.getByRole('link', { name: '测试竖图.png' })
+    await expect(portraitTile.locator('img')).toBeVisible()
+    const landscapeBox = (await albumTile.boundingBox())!
+    const portraitBox = (await portraitTile.boundingBox())!
+    expect(portraitBox.width / portraitBox.height).toBeCloseTo(24 / 40, 2)
+    expect(portraitBox.x - landscapeBox.x - landscapeBox.width).toBeCloseTo(4, 0)
+    await albumTile.scrollIntoViewIfNeeded()
+    const albumScroll = await visitor.evaluate(() => window.scrollY)
+    await albumTile.click()
+    await expect(lightbox.locator('img.is-ready')).toBeVisible()
+    await lightbox.getByRole('button', { name: '放大' }).click()
+    await expect(lightbox.getByRole('button', { name: '适合屏幕' })).toHaveAttribute('aria-pressed', 'true')
+    await visitor.keyboard.press('ArrowRight')
+    await expect.poll(() => new URL(visitor.url()).searchParams.get('photo')).toBe(portraitId)
+    await expect(lightbox.locator('img.is-ready')).toBeVisible()
+    await visitor.keyboard.press('Escape')
+    await expect(lightbox).toHaveCount(0)
+    expect(await visitor.evaluate(() => window.scrollY)).toBeCloseTo(albumScroll, -1)
     await expect(visitor.getByText('测试照片.png', { exact: true })).toHaveCount(0)
     await visitor.getByRole('link', { name: '作品', exact: true }).click()
     await expect(visitor).toHaveURL(/\/photos$/)
+    await visitor.emulateMedia({ colorScheme: 'dark' })
+    await expect(visitor.locator('.public-shell')).toHaveCSS('background-color', 'rgb(18, 19, 20)')
     const work = visitor.getByRole('link', { name: '测试照片.png' })
     await expect(work).toBeVisible()
     await expect(visitor.getByText('测试照片.png', { exact: true })).toHaveCount(0)
     await visitor.setViewportSize({ width: 390, height: 844 })
-    await expect.poll(() => visitor.locator('.portfolio-column').count()).toBe(2)
+    await expect(visitor.locator('.photo-wall')).toHaveAttribute('data-columns', '2')
     expect(await visitor.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
     await work.click()
-    await expect(visitor.locator('.viewer-stage img')).toBeVisible()
+    await expect(lightbox.locator('img.is-ready')).toBeVisible()
     await expect(visitor.getByText('测试照片.png', { exact: true })).toHaveCount(0)
     await visitor.goto(`/albums/${publicAlbum.id}/images/${publicAlbum.imageId}`)
-    await expect(visitor.locator('.viewer-stage img')).toBeVisible()
+    await expect(lightbox.locator('img.is-ready')).toBeVisible()
     await expect(visitor.getByText('测试照片.png', { exact: true })).toHaveCount(0)
     expect(originals).toEqual([])
     const privateWorks = await (await visitor.request.get(`/api/v1/public/works?album_id=${hiddenAlbum.id}`)).json()

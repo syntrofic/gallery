@@ -189,8 +189,10 @@ async fn release_expired_reservations(tx: &mut Transaction<'_, sqlx::Sqlite>) ->
 async fn queue_pressure(tx: &mut Transaction<'_, sqlx::Sqlite>) -> Result<i64> {
     release_expired_reservations(tx).await?;
     let (jobs,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM jobs WHERE state IN ('queued', 'running', 'retry_wait', 'cancel_requested')",
+        "SELECT COUNT(*) FROM jobs WHERE state IN ('queued', 'running', 'retry_wait', 'cancel_requested')
+         AND (? OR kind NOT IN ('caption_image', 'scan_plan', 'agent_run'))",
     )
+    .bind(crate::config::AI_FEATURES_AVAILABLE)
     .fetch_one(&mut **tx)
     .await?;
     let (reserved,): (i64,) =
@@ -635,7 +637,7 @@ pub async fn shutdown_workers(pool: &SqlitePool, grace: std::time::Duration) -> 
     Ok(())
 }
 
-async fn claim(pool: &SqlitePool, worker: &str) -> Result<Option<Claimed>> {
+async fn claim(pool: &SqlitePool, worker: &str, ai_enabled: bool) -> Result<Option<Claimed>> {
     if crate::db::kv_get(pool, "workers_draining").await?.as_deref() == Some("1") {
         return Ok(None);
     }
@@ -645,8 +647,10 @@ async fn claim(pool: &SqlitePool, worker: &str) -> Result<Option<Claimed>> {
     reclaim_expired(pool).await?;
     let now = db::now_ms();
     let (pending,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM jobs WHERE state IN ('queued', 'retry_wait')",
+        "SELECT COUNT(*) FROM jobs WHERE state IN ('queued', 'retry_wait')
+         AND (? OR kind NOT IN ('caption_image', 'scan_plan', 'agent_run'))",
     )
+    .bind(ai_enabled)
     .fetch_one(pool)
     .await?;
     let suppress = pending > backlog_suppress_at(pool).await?;
@@ -664,6 +668,7 @@ async fn claim(pool: &SqlitePool, worker: &str) -> Result<Option<Claimed>> {
         "SELECT id, kind, payload_json, attempt_no FROM jobs
          WHERE state IN ('queued', 'retry_wait') AND available_at <= ?
            AND attempt_no < max_attempts
+           AND (? OR kind NOT IN ('caption_image', 'scan_plan', 'agent_run'))
            AND kind NOT IN (SELECT kind FROM job_pauses)
            AND (
              ? = 0
@@ -722,6 +727,7 @@ async fn claim(pool: &SqlitePool, worker: &str) -> Result<Option<Claimed>> {
          LIMIT 1",
     )
     .bind(now)
+    .bind(ai_enabled)
     .bind(if suppress { 1 } else { 0 })
     .fetch_optional(&mut *tx)
     .await?;
@@ -914,7 +920,7 @@ pub fn spawn_workers(state: crate::app::AppState) {
 
 async fn worker_loop(state: crate::app::AppState, worker_id: String) {
         loop {
-            match claim(&state.pool, &worker_id).await {
+            match claim(&state.pool, &worker_id, state.config.ai_enabled).await {
                 Ok(Some(job)) => {
                     let pool = state.pool.clone();
                     let beat_id = job.id.clone();
@@ -1001,7 +1007,7 @@ async fn backlog_suppress_at(pool: &SqlitePool) -> Result<i64> {
 }
 
 pub async fn claim_next(pool: &SqlitePool, worker: &str) -> Result<Option<(String, String)>> {
-    Ok(claim(pool, worker).await?.map(|job| (job.id, job.kind)))
+    Ok(claim(pool, worker, true).await?.map(|job| (job.id, job.kind)))
 }
 
 pub async fn pause_kind(pool: &SqlitePool, actor_id: &str, kind: &str, reason: &str) -> Result<()> {
@@ -1184,6 +1190,31 @@ pub async fn list(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn disabled_ai_leaves_existing_work_unclaimed() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let pool = crate::db::connect(&dir.path().join("gallery.sqlite")).await?;
+        sqlx::query(
+            "INSERT INTO jobs(id, kind, dedupe_key, payload_json, scope_json, state, available_at, created_at, updated_at)
+             VALUES('caption', 'caption_image', 'caption-test', '{}', '{}', 'queued', ?, ?, ?)",
+        )
+        .bind(db::now_ms())
+        .bind(db::now_ms())
+        .bind(db::now_ms())
+        .execute(&pool)
+        .await?;
+        assert!(claim(&pool, "worker-with-ai-disabled", false).await?.is_none());
+        let mut tx = crate::db::begin_immediate(&pool).await?;
+        assert_eq!(queue_pressure(&mut tx).await?, 0);
+        tx.commit().await?;
+        let state: String = sqlx::query_scalar("SELECT state FROM jobs WHERE id = 'caption'")
+            .fetch_one(&pool)
+            .await?;
+        assert_eq!(state, "queued");
+        assert!(claim(&pool, "worker-with-ai-enabled", true).await?.is_some());
+        Ok(())
+    }
 
     #[test]
     fn hint_queue_merges_once_it_holds_sixty_four() {

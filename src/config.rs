@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+// Keep the existing configuration and implementations available for a later release.
+pub(crate) const AI_FEATURES_AVAILABLE: bool = false;
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub listen: SocketAddr,
@@ -43,7 +46,7 @@ impl Config {
             admin_password,
             admin_password_file,
             admin_password_revision: nonempty_env("GALLERY_ADMIN_PASSWORD_REVISION"),
-            ai_enabled: std::env::var("GALLERY_AI_ENABLED").ok().as_deref() == Some("1"),
+            ai_enabled: AI_FEATURES_AVAILABLE && std::env::var("GALLERY_AI_ENABLED").ok().as_deref() == Some("1"),
             daily_backup: std::env::var("GALLERY_DAILY_BACKUP").ok().as_deref() == Some("1"),
             restore_drills: std::env::var("GALLERY_RESTORE_DRILLS").ok().as_deref() == Some("1"),
             backup_replica: nonempty_env("GALLERY_BACKUP_REPLICA_DIR").map(PathBuf::from),

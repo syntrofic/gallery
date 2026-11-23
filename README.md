@@ -8,16 +8,16 @@
 
 首页展示已公开的相册，`/photos` 展示同一批公开相册中的全部作品。访客无需登录。所有者可从「管理」进入后台，在「设置 → 概览」填写画廊名称和简介，再进入相册管理打开「允许访客浏览」。私有相册和未加入公开相册的原图不会进入展示页。
 
-作品瀑布流、公开相册和大图查看器默认隐藏文件名。相册、作品和公开相册链接可在手机和桌面浏览。
+作品与公开相册使用保留照片原比例的紧凑瀑布流，默认隐藏文件名。大图覆盖当前页面，支持键盘翻页、触摸滑动和缩放。浅色和暗色外观自动跟随系统设置。
 
 ## 本地运行
 
 发布页提供 Linux Docker 镜像压缩包。导入与启动：
 
 ```sh
-docker load -i gallery-v0.2.2-linux-amd64.docker.tar.gz
+docker load -i gallery-v0.2.3-linux-amd64.docker.tar.gz
 cp .env.example .env
-# 将 .env 中的 GALLERY_IMAGE 设置为 gallery:v0.2.2
+# 将 .env 中的 GALLERY_IMAGE 设置为 gallery:v0.2.3
 docker compose up -d
 ```
 
@@ -77,7 +77,7 @@ cargo test --locked -- \
 - 本地、S3、WebDAV 存储。S3 会配置未完成分片的过期规则，并清理过期分片。
 - 存储迁移：复制、切换、冒烟、回滚、降级和退役。
 - 备份与恢复：快照清单、保护引用、签名、隔离恢复、恢复报告、只读回退。
-- Agent：本地工具、停止、跨进程停止标记，以及经 OpenRouter 调用 DeepSeek 的可选测试。
+- AI 图像描述和图库助手在当前版本暂停。已有实现、API 路由和历史数据保留。
 
 ## 备份和演练
 

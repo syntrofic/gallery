@@ -10336,6 +10336,7 @@ async fn caption_jobs_wait_until_tomorrow_when_the_daily_budget_is_spent() {
     let mut cfg = gallery::config::Config::from_env().unwrap();
     cfg.data_dir = dir.path().to_path_buf();
     cfg.admin_password = Some("owner-pass-12".into());
+    cfg.ai_enabled = true;
     let state = gallery::app::bootstrap(cfg, true).await.unwrap();
     let mut tx = gallery::db::begin_immediate(&state.pool).await.unwrap();
     gallery::db::kv_set(&mut tx, "ai_daily_token_budget", "10")

@@ -26,7 +26,7 @@ export const router = createRouter({
     { path: '/uploads/:id?', component: Transfers, meta: { title: '上传', auth: true } },
     { path: '/downloads/:id?', component: Transfers, meta: { title: '下载', auth: true } },
     { path: '/tasks/:id?', component: Tasks, meta: { title: '后台任务', auth: true } },
-    { path: '/agent/:id?', component: Agent, meta: { title: '图库助手', auth: true } },
+    { path: '/agent/:id?', component: Agent, meta: { title: '图库助手', auth: true, ai: true } },
     { path: '/settings/:section?', component: Settings, meta: { title: '设置', auth: true } },
     { path: '/login', component: SignIn, meta: { title: '登录', authScreen: true } },
     { path: '/admin/setup', component: SignIn, meta: { title: '首次设置', authScreen: true } },
