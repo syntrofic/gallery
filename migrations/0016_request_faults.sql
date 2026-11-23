@@ -1,0 +1,5 @@
+CREATE TABLE request_faults (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status INTEGER NOT NULL,
+    occurred_at INTEGER NOT NULL
+);

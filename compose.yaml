@@ -1,0 +1,33 @@
+name: gallery
+services:
+  gallery:
+    image: "${GALLERY_IMAGE:?Set GALLERY_IMAGE}"
+    command: ["serve"]
+    init: true
+    user: "10001:10001"
+    restart: unless-stopped
+    stop_grace_period: 60s
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      GALLERY_LISTEN_ADDR: "0.0.0.0:8080"
+      GALLERY_DATA_DIR: "/var/lib/gallery"
+      GALLERY_PUBLIC_URL: "${GALLERY_PUBLIC_URL:-http://127.0.0.1:8080}"
+      GALLERY_ADMIN_USERNAME: "${GALLERY_ADMIN_USERNAME:-admin}"
+      GALLERY_ADMIN_PASSWORD: "${GALLERY_ADMIN_PASSWORD:-}"
+      GALLERY_ADMIN_PASSWORD_REVISION: "${GALLERY_ADMIN_PASSWORD_REVISION:-}"
+      GALLERY_DAILY_BACKUP: "${GALLERY_DAILY_BACKUP:-1}"
+    ports:
+      - "127.0.0.1:${GALLERY_PORT:-8080}:8080"
+    volumes:
+      - "./gallery-data:/var/lib/gallery"
+      - "./config:/etc/gallery:ro"
+    tmpfs:
+      - "/tmp:rw,noexec,nosuid,nodev,size=128m"
+    healthcheck:
+      test: ["CMD", "gallery", "healthcheck", "--kind", "live"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 30s

@@ -1,0 +1,9 @@
+/target
+/gallery-data
+/.env
+/secrets/
+/.tools/
+/.codex-home/
+*.sqlite
+*.sqlite-*
+.DS_Store

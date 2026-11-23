@@ -1,0 +1,9 @@
+{
+  "type": "about:blank",
+  "title": "Not Found",
+  "status": 404,
+  "detail": "resource not found",
+  "code": "NOT_FOUND",
+  "request_id": "request-uuid",
+  "retryable": false
+}

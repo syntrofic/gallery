@@ -1,0 +1,312 @@
+openapi: 3.1.0
+info:
+  title: Gallery API
+  version: 0.1.0
+  description: |
+    Business paths are under /api/v1. Health checks are at the server root.
+    Design documents write action suffixes with a colon. The server accepts that
+    form and rewrites each colon to a slash before routing.
+servers:
+  - url: /api/v1
+paths:
+  /setup/status:
+    get:
+      responses: { "200": { description: Owner initialization flag } }
+  /setup/owner:
+    post:
+      responses: { "201": { description: Owner created, no session issued } }
+  /session:
+    get:
+      responses: { "200": { description: Anonymous or authenticated session } }
+    post:
+      responses: { "201": { description: Logged in } }
+    delete:
+      responses: { "204": { description: Logged out } }
+  /admin/account/password:
+    patch:
+      responses: { "204": { description: Owner password changed and sessions revoked } }
+  /account/password:
+    patch:
+      responses: { "204": { description: Current account password changed } }
+  /admin/users:
+    get:
+      responses: { "200": { description: Local accounts } }
+    post:
+      responses: { "201": { description: Collaborator created } }
+  /admin/users/{user_id}:
+    patch:
+      responses: { "200": { description: Account enabled or disabled } }
+  /admin/users/{user_id}/reset-password:
+    post:
+      responses: { "204": { description: Password reset and sessions revoked } }
+  /admin/settings:
+    get:
+      responses: { "200": { description: Desensitized settings } }
+  /admin/settings/{section}:
+    patch:
+      responses: { "200": { description: Settings section updated } }
+  /admin/runs/{id}:
+    get:
+      responses: { "200": { description: Maintenance run summary } }
+  /admin/audit:
+    get:
+      responses: { "200": { description: Owner audit records } }
+  /admin/storage/probe:
+    post:
+      responses: { "200": { description: Active storage capability report } }
+  /admin/variants/stats:
+    get:
+      responses: { "200": { description: Variant publication ratio, backlog, and missing previews } }
+  /admin/jobs/summary:
+    get:
+      responses: { "200": { description: Queue backlog, pauses, and recent failures } }
+  /admin/audit.jsonl:
+    get:
+      responses: { "200": { description: Owner audit export, one JSON object per line } }
+  /admin/job-pauses:
+    post:
+      responses: { "204": { description: Job kind paused } }
+  /admin/job-pauses/{kind}:
+    delete:
+      responses: { "204": { description: Job kind resumed } }
+  /admin/reconcile:
+    post:
+      responses: { "202": { description: Reconcile accepted } }
+  /admin/search/rebuild:
+    post:
+      responses: { "202": { description: Search index rebuild accepted } }
+  /admin/backups:
+    get:
+      responses: { "200": { description: Backup runs } }
+    post:
+      responses: { "202": { description: Backup accepted } }
+  /admin/backups/{id}:
+    get:
+      responses: { "200": { description: Backup status } }
+  /admin/restores:
+    post:
+      responses: { "202": { description: Restore accepted } }
+  /admin/storage-migrations:
+    post:
+      responses: { "200": { description: Storage migration plan } }
+  /admin/storage-migrations/{id}:
+    get:
+      responses: { "200": { description: Migration status } }
+  /admin/storage-migrations/{id}/start:
+    post:
+      responses: { "202": { description: Planned migration started } }
+  /admin/storage-migrations/{id}/pause:
+    post:
+      responses: { "200": { description: Migration paused } }
+  /admin/storage-migrations/{id}/resume:
+    post:
+      responses: { "200": { description: Migration resumed } }
+  /admin/storage-migrations/{id}/abort:
+    post:
+      responses: { "200": { description: Migration aborted before cutover } }
+  /admin/storage-migrations/{id}/rollback:
+    post:
+      responses: { "200": { description: Route rolled back after cutover } }
+  /admin/storage-migrations/{id}/items:
+    get:
+      responses: { "200": { description: Migration objects without credentials } }
+  /admin/storage-migrations/{id}/cutover:
+    post:
+      responses: { "200": { description: Route switched after the seal matches } }
+  /admin/storage-migrations/{id}/retire:
+    post:
+      responses: { "200": { description: Retire preview or confirmed source cleanup } }
+  /albums:
+    get:
+      responses: { "200": { description: Visible albums } }
+    post:
+      responses: { "201": { description: Album created } }
+  /albums/{album_id}:
+    get:
+      responses: { "200": { description: Album } }
+    patch:
+      responses: { "200": { description: Album updated } }
+    delete:
+      responses: { "204": { description: Album soft-deleted } }
+  /albums/{album_id}/access:
+    patch:
+      responses: { "200": { description: Album ACL updated } }
+  /albums/{album_id}/images:
+    get:
+      responses: { "200": { description: Album images } }
+  /albums/{album_id}/images/{image_id}:
+    get:
+      responses: { "200": { description: Image detail with neighbors } }
+  /albums/{album_id}/images/{image_id}/variants/{variant_id}/body:
+    get:
+      responses: { "200": { description: Published variant bytes } }
+  /albums/{album_id}/images/{image_id}/original-view:
+    get:
+      responses: { "200": { description: Original bytes for viewing } }
+  /albums/{album_id}/images/{image_id}/original-download:
+    get:
+      responses: { "200": { description: Original bytes as a download } }
+  /albums/{album_id}/items/add:
+    post:
+      responses: { "200": { description: Images added } }
+  /albums/{album_id}/items/remove:
+    post:
+      responses: { "200": { description: Images removed } }
+  /albums/{album_id}/items/move:
+    post:
+      responses: { "200": { description: Images moved } }
+  /albums/{album_id}/items/reorder:
+    post:
+      responses: { "200": { description: Image reordered } }
+  /albums/{album_id}/items/rename:
+    post:
+      responses: { "200": { description: Album-specific display name changed } }
+  /albums/{album_id}/uploads:
+    post:
+      responses: { "201": { description: Upload batch created } }
+  /albums/{album_id}/downloads/selected:
+    post:
+      responses: { "200": { description: Per-image original claims } }
+  /albums/{album_id}/archives:
+    post:
+      responses: { "202": { description: Original ZIP accepted } }
+  /albums/{album_id}/restore:
+    post:
+      responses: { "200": { description: Album restored } }
+  /uploads:
+    get:
+      responses: { "200": { description: Upload batches } }
+  /uploads/{batch_id}:
+    get:
+      responses: { "200": { description: Upload batch } }
+    delete:
+      responses: { "202": { description: In-progress batch canceled } }
+  /uploads/{batch_id}/items/{item_id}/body:
+    put:
+      responses: { "201": { description: Image committed } }
+  /downloads/claims/{claim_id}/body:
+    get:
+      responses: { "200": { description: Claimed original } }
+  /archives:
+    get:
+      responses: { "200": { description: Archive packages } }
+  /archives/{id}:
+    get:
+      responses: { "200": { description: Archive status } }
+  /archives/{id}/body:
+    get:
+      responses: { "200": { description: ZIP bytes } }
+  /jobs:
+    get:
+      responses: { "200": { description: Visible jobs } }
+  /jobs/{id}:
+    get:
+      responses: { "200": { description: Job status } }
+  /jobs/{id}/cancel:
+    post:
+      responses: { "202": { description: Cancel requested } }
+  /jobs/{id}/retry:
+    post:
+      responses: { "202": { description: Retry accepted } }
+  /capabilities:
+    get:
+      responses: { "200": { description: Codec and limit capabilities } }
+  /variant-profiles/current:
+    get:
+      responses: { "200": { description: Current variant profile } }
+    put:
+      responses: { "202": { description: New profile revision accepted } }
+  /conversions:
+    post:
+      responses: { "202": { description: Conversion accepted } }
+  /conversions/{id}:
+    get:
+      responses: { "200": { description: Conversion status } }
+  /conversions/{id}/outputs/{output_id}/body:
+    get:
+      responses: { "200": { description: Conversion output } }
+  /images/{image_id}/caption:
+    patch:
+      responses: { "200": { description: Human caption saved } }
+  /images/{image_id}/trash:
+    post:
+      responses: { "200": { description: Image trashed } }
+  /images/{image_id}/restore:
+    post:
+      responses: { "200": { description: Image restored } }
+  /images/{image_id}/purge:
+    post:
+      responses: { "202": { description: Purge accepted } }
+  /library/images:
+    get:
+      responses: { "200": { description: Owner library } }
+  /library/images/{image_id}:
+    get:
+      responses: { "200": { description: Owner image } }
+  /library/images/{image_id}/variants/{variant_id}/body:
+    get:
+      responses: { "200": { description: Owner unassigned variant bytes } }
+  /library/images/{image_id}/original-view:
+    get:
+      responses: { "200": { description: Owner unassigned original inline } }
+  /library/images/{image_id}/original-download:
+    get:
+      responses: { "200": { description: Owner unassigned original download } }
+  /trash:
+    get:
+      responses: { "200": { description: Trashed images } }
+  /search:
+    get:
+      responses: { "200": { description: Authorized search } }
+  /ai/scans:
+    post:
+      responses: { "202": { description: Scan accepted when AI is enabled } }
+  /ai/scans/{id}:
+    get:
+      responses: { "200": { description: Scan status } }
+  /ai/scans/{id}/cancel:
+    post:
+      responses: { "200": { description: Scan canceled; shared caption jobs stay queued } }
+  /agent/sessions:
+    get:
+      responses: { "200": { description: Agent sessions } }
+    post:
+      responses: { "201": { description: Agent session created when enabled } }
+  /agent/sessions/{id}:
+    get:
+      responses: { "200": { description: Agent session } }
+  /agent/sessions/{id}/messages:
+    get:
+      responses: { "200": { description: Session messages } }
+    post:
+      responses: { "202": { description: Message stored without calling a model } }
+  /agent/sessions/{id}/messages/{message_id}/remove:
+    post:
+      responses: { "200": { description: Unsent message removed } }
+  /agent/sessions/{id}/messages/{message_id}/resend:
+    post:
+      responses: { "200": { description: Unknown delivery explicitly resent } }
+  /agent/sessions/{id}/turns/{turn_id}/stop:
+    post:
+      responses: { "200": { description: Turn stopped, submitted jobs continue } }
+  /events:
+    get:
+      responses: { "200": { description: Server-sent events } }
+components:
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, detail, code, request_id, retryable]
+    Job:
+      type: object
+      required: [id, kind, state, status_url, progress]
+      properties:
+        state:
+          type: string
+          enum: [queued, running, retry_wait, cancel_requested, succeeded, failed, canceled]
+    Session:
+      type: object
+      properties:
+        actor: { nullable: true }
+        csrf_token: { type: string }
+        event_cursor: { type: integer }
