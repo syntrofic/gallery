@@ -16762,6 +16762,18 @@ async fn variant_cache_is_private_and_originals_are_not_stored() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = Harness::new(dir.path().to_path_buf()).await;
     h.login().await;
+    let mut specs = gallery::versions::default_specs();
+    specs[0].format = "jpeg".into();
+    let (status, _) = h
+        .json(
+            Request::put("/api/v1/variant-profiles/current")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::IF_MATCH, "\"1\"")
+                .body(Body::from(serde_json::to_vec(&specs).unwrap()))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
     let (status, album) = h
         .json(
             Request::post("/api/v1/albums")
@@ -16779,7 +16791,8 @@ async fn variant_cache_is_private_and_originals_are_not_stored() {
         .call(Request::get(&path).body(Body::empty()).unwrap())
         .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(!bytes.is_empty());
+    assert_eq!(headers[header::CONTENT_TYPE], "image/jpeg");
+    assert!(bytes.starts_with(&[0xff, 0xd8]));
     assert_eq!(
         headers.get(header::CACHE_CONTROL).unwrap(),
         "private, no-cache"

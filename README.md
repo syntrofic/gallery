@@ -15,9 +15,9 @@
 发布页提供 Linux Docker 镜像压缩包。导入与启动：
 
 ```sh
-docker load -i gallery-v0.2.1-linux-amd64.docker.tar.gz
+docker load -i gallery-v0.2.2-linux-amd64.docker.tar.gz
 cp .env.example .env
-# 将 .env 中的 GALLERY_IMAGE 设置为 gallery:v0.2.1
+# 将 .env 中的 GALLERY_IMAGE 设置为 gallery:v0.2.2
 docker compose up -d
 ```
 

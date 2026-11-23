@@ -2209,8 +2209,8 @@ async fn variant_body(
         &state,
         &blob,
         false,
-        "variant.png",
-        "image/png",
+        "",
+        "",
         &headers,
         "private, no-cache",
     )
@@ -2282,8 +2282,8 @@ async fn original_bytes(
             state,
             &blob,
             false,
-            "variant.png",
-            "image/png",
+            "",
+            "",
             headers,
             "private, no-cache",
         )
@@ -3405,8 +3405,8 @@ async fn library_variant_body(
         &state,
         &blob,
         false,
-        "variant.png",
-        "image/png",
+        "",
+        "",
         &headers,
         "private, no-cache",
     )
