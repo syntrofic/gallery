@@ -41,6 +41,7 @@ html:root {
     --on-accent: #161718;
     --soft: #242627;
   }
+  img { filter: brightness(.68); }
 }
 * { box-sizing: border-box; }
 html { min-width: 320px; }
