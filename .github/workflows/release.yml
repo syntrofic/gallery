@@ -47,8 +47,10 @@ jobs:
           container=$(docker run -d --read-only --tmpfs /tmp -p 127.0.0.1:48143:8080 \
             -e GALLERY_LISTEN_ADDR=0.0.0.0:8080 -e GALLERY_DATA_DIR=/tmp/gallery "gallery:$TAG")
           trap 'docker logs "$container"; docker rm -f "$container"' EXIT
-          curl --fail --retry 20 --retry-connrefused --retry-delay 1 http://127.0.0.1:48143/health/ready
-          curl --fail http://127.0.0.1:48143/albums -o /tmp/gallery-index.html
+          curl --fail --silent --show-error --retry 20 --retry-all-errors --retry-delay 1 --max-time 5 \
+            http://127.0.0.1:48143/health/ready
+          curl --fail --silent --show-error http://127.0.0.1:48143/ -o /tmp/gallery-index.html
+          curl --fail --silent --show-error http://127.0.0.1:48143/api/v1/public/collections
           asset=$(grep -oE '/assets/[^"]+\.js' /tmp/gallery-index.html | head -1)
           test -n "$asset"
           curl --fail "http://127.0.0.1:48143$asset" -o /dev/null
