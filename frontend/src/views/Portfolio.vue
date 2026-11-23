@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { RouterLink, useRoute, useRouter } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 import { SButton, SSpinner } from '@syntrofic/ui'
-import { ChevronDown, Image as ImageIcon } from 'lucide-vue-next'
+import { Image as ImageIcon } from 'lucide-vue-next'
 import { account, albumPath, errorText, mediaPath, query, request, type Page, type Collection, type Work } from '../api'
 import { galleryPhoto, galleryPhotoLink } from '../galleryPhoto'
+import { fittedVariants, mediaSrcset, photoAspectRatio } from '../galleryMedia'
 import Notice from '../components/Notice.vue'
 import PublicLightbox from '../components/PublicLightbox.vue'
 import PublicPhotoGrid from '../components/PublicPhotoGrid.vue'
 
 const route = useRoute()
-const router = useRouter()
 const isWorks = computed(() => route.path === '/photos')
 const filter = computed(() => typeof route.query.album === 'string' ? route.query.album : '')
 const collections = ref<Collection[]>([])
@@ -32,28 +32,30 @@ const adjacent = computed(() => {
 })
 const featured = computed(() => {
   const covers = collections.value.flatMap(collection => collection.covers)
-    .filter(work => media(work, 'desktop'))
-  return covers.find(work => work.width >= work.height) ?? covers[0]
+    .filter(work => media(work, true).src)
+  return covers.find(work => photoAspectRatio(work) >= 1) ?? covers[0]
 })
+const heroMedia = computed(() => featured.value && media(featured.value, true))
 let requests: AbortController | undefined
 
-function media(work: Work, size: 'mobile' | 'desktop' = 'mobile') {
+function media(work: Work, large = false) {
   const variants = work.variants.filter(item => !failed.value.has(item.id))
-  const variant = variants.find(item => item.spec_id === size)
-    || variants.find(item => item.spec_id === 'mobile')
-    || variants.find(item => item.spec_id === 'thumb') || variants[0]
-  return variant ? mediaPath(work.album_id, work.id, variant.id) : ''
+  const fitted = fittedVariants(variants, photoAspectRatio(work))
+  const preferred = fitted.filter(item => large ? item.spec_id !== 'thumb' : item.spec_id === 'thumb' || item.spec_id === 'mobile')
+  const candidates = preferred.length ? preferred : fitted.length ? fitted : variants
+  const variant = candidates.find(item => item.spec_id === (large ? 'mobile' : 'thumb')) || candidates[0]
+  return {
+    src: variant ? mediaPath(work.album_id, work.id, variant.id) : '',
+    srcset: mediaSrcset(candidates, work.album_id, work.id),
+  }
 }
-function markFailed(source: string) {
-  const match = source.match(/\/variants\/([^/]+)\/body$/)
+function markFailed(event: Event) {
+  const image = event.currentTarget as HTMLImageElement
+  const match = (image.currentSrc || image.src).match(/\/variants\/([^/]+)\/body$/)
   if (match?.[1]) failed.value.add(decodeURIComponent(match[1]))
 }
 function albumLink(id: string) { return { path: albumPath(id), query: { portfolio: '1' } } }
 function workLink(work: Work) { return galleryPhotoLink(route, work.album_id, work.id) }
-function changeCollection(event: Event) {
-  const album = (event.target as HTMLSelectElement).value
-  void router.replace({ path: '/photos', query: album ? { album } : {} })
-}
 async function load(append = false) {
   requests?.abort()
   const current = new AbortController()
@@ -99,8 +101,8 @@ onUnmounted(() => requests?.abort())
         <p v-if="account.presentation.description" class="preserve">{{ account.presentation.description }}</p>
         <RouterLink v-if="featured" to="/photos" class="portfolio-link">浏览全部作品</RouterLink>
       </div>
-      <RouterLink v-if="featured" :to="workLink(featured)" class="portfolio-feature" :aria-label="featured.display_name">
-        <img :src="media(featured, 'desktop')" alt="" fetchpriority="high" decoding="async" @error="markFailed(($event.target as HTMLImageElement).src)" />
+      <RouterLink v-if="featured && heroMedia" :to="workLink(featured)" class="portfolio-feature" :aria-label="featured.display_name">
+        <img v-bind="heroMedia" sizes="(max-width: 640px) calc(100vw - 1.8rem), 60vw" alt="" fetchpriority="high" decoding="async" @error="markFailed" />
       </RouterLink>
     </header>
     <div class="portfolio-content">
@@ -111,11 +113,11 @@ onUnmounted(() => requests?.abort())
         <article v-for="collection in collections" :key="collection.id" class="collection">
           <RouterLink :to="albumLink(collection.id)" class="collection-link">
             <div class="collection-stack">
-              <div v-for="(work, index) in collection.covers.filter(item => media(item))" :key="work.id"
+              <div v-for="(work, index) in collection.covers.filter(item => media(item).src)" :key="work.id"
                 class="collection-cover" :class="`cover-${index}`">
-                <img :src="media(work)" alt="" loading="lazy" decoding="async" @error="markFailed(($event.target as HTMLImageElement).src)" />
+                <img v-bind="media(work)" sizes="(max-width: 640px) 46vw, 30vw" alt="" loading="lazy" decoding="async" @error="markFailed" />
               </div>
-              <div v-if="!collection.covers.some(item => media(item))" class="collection-cover cover-0 empty-cover"><ImageIcon :size="27" :stroke-width="1.25" aria-hidden="true" /></div>
+              <div v-if="!collection.covers.some(item => media(item).src)" class="collection-cover cover-0 empty-cover"><ImageIcon :size="27" :stroke-width="1.25" aria-hidden="true" /></div>
             </div>
             <div class="collection-meta"><h3>{{ collection.name }}</h3><span>{{ collection.count }} 张</span></div>
             <p v-if="collection.description" class="collection-description">{{ collection.description }}</p>
@@ -130,13 +132,6 @@ onUnmounted(() => requests?.abort())
   <section v-else class="portfolio-content portfolio-works">
     <div class="portfolio-section-title">
       <div><h1>{{ activeCollection?.name || '全部作品' }}</h1></div>
-      <label v-if="collections.length" class="field-label portfolio-filter"><span class="sr-only">筛选相册</span>
-        <select :value="filter" @change="changeCollection">
-          <option value="">所有相册</option>
-          <option v-for="collection in collections" :key="collection.id" :value="collection.id">{{ collection.name }}</option>
-        </select>
-        <ChevronDown :size="16" aria-hidden="true" />
-      </label>
     </div>
     <Notice :error="error" />
     <PublicPhotoGrid v-if="works.length" :photos="works" />

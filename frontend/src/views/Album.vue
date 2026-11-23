@@ -26,7 +26,6 @@ const message = ref('')
 const busy = ref(false)
 const loading = ref(true)
 const sort = ref(typeof route.query.sort === 'string' ? route.query.sort : 'manual')
-const filter = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const chosen = ref<string[]>([])
 const selecting = ref(false)
 const targets = ref<Album[]>([])
@@ -64,7 +63,7 @@ async function load(append = false, background = false) {
   try {
     const [view, page] = await Promise.all([
       request<Album>(base.value, { signal: local.signal }),
-      request<Page<Photo>>(`${base.value}/images${query({ sort: sort.value, q: filter.value, limit: 48, cursor: append ? cursor.value : undefined })}`, { signal: local.signal }),
+      request<Page<Photo>>(`${base.value}/images${query({ sort: sort.value, limit: 48, cursor: append ? cursor.value : undefined })}`, { signal: local.signal }),
     ])
     if (local.signal.aborted) return
     const changed = loadedAlbum !== view.id
@@ -88,9 +87,9 @@ async function load(append = false, background = false) {
     if (!local.signal.aborted) loading.value = false
   }
 }
-async function changeFilter() {
+async function changeSort() {
   chosen.value = []
-  await router.replace({ path: route.path, query: { portfolio: publicView.value ? '1' : undefined, q: filter.value || undefined, sort: sort.value === 'manual' ? undefined : sort.value } })
+  await router.replace({ path: route.path, query: { portfolio: publicView.value ? '1' : undefined, sort: sort.value === 'manual' ? undefined : sort.value } })
   await load()
 }
 function toggle(id: string) {
@@ -260,13 +259,9 @@ onUnmounted(() => { controller?.abort(); mediaQuery.removeEventListener('change'
       </div>
       <Notice v-else-if="isManage && !album.capabilities.edit" error="当前账号无法编辑此相册。" />
       <div class="album-toolbar">
-        <form class="search-row" @submit.prevent="changeFilter">
-          <SInput v-model="filter" type="search" label="筛选照片" hide-label placeholder="筛选照片" />
-          <SButton type="submit" variant="secondary">筛选</SButton>
-        </form>
         <div class="actions">
           <label class="field-label"><span class="sr-only">照片排序</span>
-            <select v-model="sort" @change="changeFilter">
+            <select v-model="sort" @change="changeSort">
               <option value="manual">相册顺序</option><option value="created_desc">最新上传</option>
               <option value="created_asc">最早上传</option><option value="name_asc">名称</option>
             </select>
@@ -307,7 +302,7 @@ onUnmounted(() => { controller?.abort(); mediaQuery.removeEventListener('change'
             <PhotoTile :photo="photo" :album="id" :label="photo.display_name" :eager="index < 4" />
             <span class="item-name">{{ photo.display_name }}</span>
           </RouterLink>
-          <div v-if="isManage && album.capabilities.edit && sort === 'manual' && !filter" class="sort-controls">
+          <div v-if="isManage && album.capabilities.edit && sort === 'manual'" class="sort-controls">
             <SButton variant="ghost" size="sm" :disabled="!index || busy" :aria-label="`上移 ${photo.display_name}`" @click="shift(index, -1)"><ArrowUp :size="15" /></SButton>
             <SButton variant="ghost" size="sm" :disabled="index + 1 >= images.length || busy" :aria-label="`下移 ${photo.display_name}`" @click="shift(index, 1)"><ArrowDown :size="15" /></SButton>
           </div>
@@ -316,8 +311,8 @@ onUnmounted(() => { controller?.abort(); mediaQuery.removeEventListener('change'
       <div v-else-if="!loading && !error" class="empty">
         <ImagePlus v-if="album.capabilities.upload" :size="38" :stroke-width="1.3" />
         <Images v-else :size="38" :stroke-width="1.3" />
-        <h2>{{ filter ? '没有符合条件的照片' : '相册里还没有照片' }}</h2>
-        <RouterLink v-if="album.capabilities.upload && account.session.actor && !filter" :to="{ path: '/uploads', query: { album: id } }" class="inline-action">上传第一张照片</RouterLink>
+        <h2>相册里还没有照片</h2>
+        <RouterLink v-if="album.capabilities.upload && account.session.actor && !publicView" :to="{ path: '/uploads', query: { album: id } }" class="inline-action">上传第一张照片</RouterLink>
       </div>
       <SButton v-if="cursor" variant="secondary" class="fit" @click="load(true)">加载更多</SButton>
     </template>

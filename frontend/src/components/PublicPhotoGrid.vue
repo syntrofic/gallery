@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import { Image as ImageIcon } from 'lucide-vue-next'
 import { mediaPath, type Photo } from '../api'
+import { fittedVariants, mediaSrcset, photoAspectRatio } from '../galleryMedia'
 import { galleryPhotoLink } from '../galleryPhoto'
 
 type GalleryImage = Photo & { album_id?: string }
@@ -21,7 +22,7 @@ const layout = computed(() => {
   const heights = Array<number>(count).fill(0)
   const tiles = props.photos.map((photo, index) => {
     const column = heights.indexOf(Math.min(...heights))
-    const ratio = Math.max(1, photo.width) / Math.max(1, photo.height)
+    const ratio = photoAspectRatio(photo)
     const height = Math.max(1, Math.round(columnWidth / ratio))
     const left = column * (columnWidth + gap)
     const top = heights[column]
@@ -34,17 +35,13 @@ const layout = computed(() => {
 function album(photo: GalleryImage) { return props.albumId || photo.album_id! }
 function preview(photo: GalleryImage, ratio: number) {
   const available = (photo.variants || []).filter(variant => !failed.value.has(variant.id))
-  const fitted = available.filter(variant =>
-    variant.width && variant.height && Math.abs(variant.width / variant.height / ratio - 1) < .04)
-  const candidates = fitted.length ? fitted : available
-  const best = candidates.find(variant => variant.spec_id === 'mobile') || candidates[0]
-  const widths = new Map<number, string>()
-  for (const variant of fitted) {
-    if (variant.width) widths.set(variant.width, mediaPath(album(photo), photo.id, variant.id))
-  }
+  const fitted = fittedVariants(available, ratio)
+  const small = fitted.filter(variant => variant.spec_id === 'thumb' || variant.spec_id === 'mobile')
+  const candidates = small.length ? small : fitted.length ? fitted : available
+  const best = candidates.find(variant => variant.spec_id === 'thumb') || candidates[0]
   return {
     src: best ? mediaPath(album(photo), photo.id, best.id) : '',
-    srcset: widths.size > 1 ? [...widths].map(([size, url]) => `${url} ${size}w`).join(', ') : undefined,
+    srcset: mediaSrcset(small.length ? small : fitted, album(photo), photo.id),
   }
 }
 const tiles = computed(() => layout.value.tiles.map(tile => ({ ...tile, ...preview(tile.photo, tile.ratio) })))

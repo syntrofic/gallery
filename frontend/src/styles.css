@@ -226,9 +226,6 @@ details > * + * { margin-bottom: .75rem; }
 .portfolio-works { padding: clamp(1.4rem, 3vw, 2.5rem) clamp(.375rem, 1.3vw, 1.2rem) 3rem; }
 .portfolio-works .portfolio-section-title { margin-inline: clamp(.5rem, 1.8vw, 1.65rem); margin-bottom: .85rem; }
 .portfolio-works h1 { font-size: clamp(1.95rem, 5vw, 3.5rem); }
-.portfolio-filter { min-width: 10rem; max-width: 100%; position: relative; }
-.portfolio-filter select { appearance: none; padding-inline: .8rem 2rem; cursor: pointer; }
-.portfolio-filter svg { position: absolute; right: .65rem; top: 50%; transform: translateY(-50%); pointer-events: none; }
 .portfolio-collections { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(1.6rem, 4vw, 3.2rem); }
 .collection { min-width: 0; }
 .collection-link { display: block; height: 100%; }
@@ -253,7 +250,6 @@ details > * + * { margin-bottom: .75rem; }
 .public-album { gap: .85rem; }
 .public-album > :is(.breadcrumbs, .title-row, .album-toolbar) { margin-inline: clamp(.5rem, 1.8vw, 1.65rem); }
 .public-album .album-toolbar { padding-bottom: .85rem; border-bottom: 1px solid var(--edge); }
-.public-album .search-row { width: min(100%, 24rem); }
 .public-album .breadcrumbs a { text-decoration: underline; text-underline-offset: .2em; }
 
 html:has(.public-lightbox[open]) { overflow: hidden; overscroll-behavior: none; }
@@ -280,7 +276,7 @@ html:has(.public-lightbox[open]) { overflow: hidden; overscroll-behavior: none; 
 .lightbox-download { display: grid; place-items: center; }
 .lightbox-download:hover { background: var(--soft); }
 .lightbox-stage { position: relative; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; overflow: hidden; touch-action: none; user-select: none; cursor: default; }
-.lightbox-stage img { max-width: 100%; max-height: 100%; opacity: 0; user-select: none; cursor: zoom-in; }
+.lightbox-stage img { max-width: 100%; max-height: 100%; object-fit: contain; opacity: 0; user-select: none; cursor: zoom-in; }
 .lightbox-stage img.is-ready { opacity: 1; }
 .lightbox-stage.is-zoomed, .lightbox-stage.is-zoomed img { cursor: grab; }
 .lightbox-stage.is-zoomed:active, .lightbox-stage.is-zoomed img:active { cursor: grabbing; }

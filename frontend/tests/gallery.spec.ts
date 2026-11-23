@@ -23,14 +23,14 @@ async function seedPhoto(page: Page, album: string) {
   return { id, imageId: await addPhoto(page, headers, id, '测试照片.png', image) }
 }
 
-async function addPhoto(page: Page, headers: Record<string, string>, id: string, name: string, body: Buffer) {
+async function addPhoto(page: Page, headers: Record<string, string>, id: string, name: string, body: Buffer, mime = 'image/png') {
   const batch = await page.request.post(`/api/v1/albums/${id}/uploads`, {
     headers, data: { items: [{ client_item_id: 'browser-fixture', name, size: body.byteLength }] },
   })
   expect(batch.ok()).toBeTruthy()
   const selected = await batch.json()
   const put = await page.request.put(`/api/v1/uploads/${selected.id}/items/${selected.items[0].upload_item_id}/body`, {
-    headers: { ...headers, 'content-type': 'image/png' }, data: body,
+    headers: { ...headers, 'content-type': mime }, data: body,
   })
   expect(put.ok(), await put.text()).toBeTruthy()
   return (await put.json()).image_id as string
@@ -184,6 +184,7 @@ test('the public portfolio follows system appearance and opens an accessible lig
     await expect(visitor.getByRole('link', { name: '管理' })).toHaveAttribute('href', '/admin')
     expect(await visitor.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(255, 255, 255)')
     await collection.click()
+    await expect(visitor.getByLabel('筛选照片')).toHaveCount(0)
     await visitor.setViewportSize({ width: 390, height: 360 })
     const albumTile = visitor.getByRole('link', { name: '测试照片.png' })
     await expect(albumTile.locator('img')).toBeVisible()
@@ -208,6 +209,7 @@ test('the public portfolio follows system appearance and opens an accessible lig
     await expect(visitor.getByText('测试照片.png', { exact: true })).toHaveCount(0)
     await visitor.getByRole('link', { name: '作品', exact: true }).click()
     await expect(visitor).toHaveURL(/\/photos$/)
+    await expect(visitor.getByLabel('筛选相册')).toHaveCount(0)
     await visitor.emulateMedia({ colorScheme: 'dark' })
     await expect(visitor.locator('.public-shell')).toHaveCSS('background-color', 'rgb(18, 19, 20)')
     const work = visitor.getByRole('link', { name: '测试照片.png' })
@@ -226,5 +228,58 @@ test('the public portfolio follows system appearance and opens an accessible lig
     const privateWorks = await (await visitor.request.get(`/api/v1/public/works?album_id=${hiddenAlbum.id}`)).json()
     expect(privateWorks.items).toEqual([])
     expect((await visitor.request.get(`/api/v1/albums/${hiddenAlbum.id}`)).status()).toBe(404)
+  } finally { await visitor.close() }
+})
+
+test('the photo wall follows EXIF orientation and zoom requests a larger preview', async ({ page, browser }) => {
+  await login(page)
+  const { id } = await seedPhoto(page, '预览分辨率回归')
+  const headers = { 'x-csrf-token': (await (await page.request.get('/api/v1/session')).json()).csrf_token }
+  const encoded = await page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 1440
+    canvas.height = 1920
+    canvas.getContext('2d')!.fillRect(0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/jpeg').split(',')[1]
+  })
+  const jpeg = Buffer.from(encoded, 'base64')
+  // APP1 EXIF little-endian TIFF with Orientation=6 (90° clockwise).
+  const orientation = Buffer.from('ffe1002245786966000049492a0008000000010012010300010000000600000000000000', 'hex')
+  const imageId = await addPhoto(page, headers, id, '旋转预览.jpg', Buffer.concat([jpeg.subarray(0, 2), orientation, jpeg.subarray(2)]), 'image/jpeg')
+  const path = `/api/v1/albums/${id}/images/${imageId}`
+  const metadata = async () => (await page.request.get(path)).json()
+  await expect.poll(async () => (await metadata()).variants.map((variant: { spec_id: string }) => variant.spec_id)).toEqual(
+    expect.arrayContaining(['mobile', 'desktop']),
+  )
+  const previews = await metadata()
+  expect(previews.width).toBe(1440)
+  expect(previews.height).toBe(1920)
+  const mobile = previews.variants.find((variant: { spec_id: string }) => variant.spec_id === 'mobile')
+  const desktop = previews.variants.find((variant: { spec_id: string }) => variant.spec_id === 'desktop')
+  expect(mobile.width).toBe(960)
+  expect(desktop.width).toBe(1920)
+  const album = await (await page.request.get(`/api/v1/albums/${id}`)).json()
+  expect((await page.request.patch(`/api/v1/albums/${id}/access`, {
+    headers, data: { visibility: 'public', expected_revision: album.revision },
+  })).ok()).toBeTruthy()
+
+  const visitor = await browser.newPage({ baseURL: new URL(page.url()).origin, viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 })
+  try {
+    await visitor.goto(`/albums/${id}?portfolio=1`)
+    const tile = visitor.getByRole('link', { name: '旋转预览.jpg' })
+    await expect(tile.locator('img')).toBeVisible()
+    const box = (await tile.boundingBox())!
+    expect(box.width / box.height).toBeCloseTo(4 / 3, 2)
+    await tile.click()
+    const viewer = visitor.getByRole('dialog', { name: '照片查看器' })
+    const preview = viewer.locator('img.is-ready')
+    await expect.poll(() => preview.evaluate(img => (img as HTMLImageElement).currentSrc)).toContain(`/variants/${mobile.id}/body`)
+    await viewer.getByRole('button', { name: '放大' }).click()
+    const larger = previews.variants.filter((variant: { width: number }) => variant.width > mobile.width)
+    await expect.poll(async () => {
+      const source = await preview.evaluate(img => (img as HTMLImageElement).currentSrc)
+      return larger.some((variant: { id: string }) => source.endsWith(`/variants/${variant.id}/body`))
+    }).toBe(true)
+    await expect(viewer.getByRole('button', { name: '适合屏幕' })).toHaveAttribute('aria-pressed', 'true')
   } finally { await visitor.close() }
 })

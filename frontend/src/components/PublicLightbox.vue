@@ -4,6 +4,7 @@ import { useRoute, useRouter, type RouteLocationRaw } from 'vue-router'
 import { SButton, SSpinner } from '@syntrofic/ui'
 import { ArrowDownToLine, ChevronLeft, ChevronRight, ImageOff, Scan, X, ZoomIn, ZoomOut } from 'lucide-vue-next'
 import { account, albumPath, errorText, mediaPath, photoPath, query, request, visibleCaption, type Album, type Photo } from '../api'
+import { fittedVariants, mediaSrcset, photoAspectRatio } from '../galleryMedia'
 import { galleryPhotoLink, type GalleryPhotoRef } from '../galleryPhoto'
 
 const props = defineProps<{
@@ -23,23 +24,33 @@ const loading = ref(true)
 const ready = ref(false)
 const error = ref('')
 const original = ref(false)
-const fallback = ref(0)
+const failed = ref(new Set<string>())
+const viewport = ref({ width: 0, height: 0 })
 const scale = ref(1)
 const shift = ref({ x: 0, y: 0 })
 let loader: AbortController | undefined
+let observer: ResizeObserver | undefined
 let closing = false
 
 const base = computed(() => photoPath(props.selection.albumId, props.selection.imageId))
+const aspect = computed(() => photo.value ? photoAspectRatio(photo.value) : 1)
+const fittedWidth = computed(() => {
+  if (!photo.value || !viewport.value.width || !viewport.value.height) return 0
+  const originalWidth = Math.max(photo.value.width, photo.value.height) * Math.min(1, aspect.value)
+  return Math.min(viewport.value.width, viewport.value.height * aspect.value, originalWidth)
+})
 const variants = computed(() => {
-  const image = photo.value
-  const preferred = image?.selection?.[matchMedia('(max-width: 759px)').matches ? 'mobile' : 'desktop']?.variant_id
-  return [...new Set([preferred, ...(image?.variants || []).map(variant => variant.id)].filter((id): id is string => Boolean(id)))]
+  const available = (photo.value?.variants || []).filter(variant => !failed.value.has(variant.id))
+  const fitted = fittedVariants(available, aspect.value)
+  const details = fitted.filter(variant => variant.spec_id !== 'thumb')
+  return details.length ? details : fitted.length ? fitted : available
 })
 const source = computed(() => {
   if (original.value) return '/api/v1' + base.value + '/original-view'
-  const id = variants.value[fallback.value]
+  const id = (variants.value.find(variant => variant.spec_id === 'mobile') || variants.value[0])?.id
   return id ? mediaPath(props.selection.albumId, props.selection.imageId, id) : ''
 })
+const srcset = computed(() => original.value ? undefined : mediaSrcset(variants.value, props.selection.albumId, props.selection.imageId))
 function neighbor(direction: 'previous' | 'next') {
   if (props.adjacent) return props.adjacent[direction]
   const id = direction === 'previous' ? photo.value?.previous_image_id : photo.value?.next_image_id
@@ -56,12 +67,11 @@ async function load() {
   error.value = ''
   loading.value = true
   original.value = false
-  fallback.value = 0
+  failed.value.clear()
   const { albumId } = props.selection
   try {
     const loaded = await request<Photo>(base.value + query({
       sort: typeof route.query.sort === 'string' ? route.query.sort : undefined,
-      q: typeof route.query.q === 'string' ? route.query.q : undefined,
     }), { signal: controller.signal })
     if (controller.signal.aborted) return
     photo.value = loaded
@@ -106,9 +116,14 @@ function onKey(event: KeyboardEvent) {
   } else if (event.key === '+' || event.key === '=') zoomTo(scale.value + .5)
   else if (event.key === '-') zoomTo(scale.value - .5)
 }
-function imageError() {
+function imageError(event: Event) {
   if (original.value) original.value = false
-  else fallback.value++
+  else {
+    const element = event.currentTarget as HTMLImageElement
+    const id = (element.currentSrc || element.src).match(/\/variants\/([^/]+)\/body$/)?.[1]
+    if (id) failed.value.add(decodeURIComponent(id))
+    ready.value = element.naturalWidth > 0
+  }
 }
 
 type Point = { x: number; y: number }
@@ -192,17 +207,25 @@ function closeFromBackdrop() {
   if (scale.value === 1 && !pinched && (!lastSwipe || performance.now() - lastSwipe > 350)) close()
 }
 
-watch(() => [props.selection.albumId, props.selection.imageId, route.query.sort, route.query.q], () => void load(), { immediate: true })
-watch(source, () => {
-  ready.value = false
+watch(() => [props.selection.albumId, props.selection.imageId, route.query.sort], () => void load(), { immediate: true })
+watch(source, () => { ready.value = false })
+watch([base, original], () => {
   scale.value = 1
   shift.value = { x: 0, y: 0 }
   pointers.clear()
   pinch = undefined
   start = undefined
 })
-onMounted(() => dialog.value?.showModal())
-onBeforeUnmount(() => { loader?.abort(); dialog.value?.close() })
+onMounted(() => {
+  dialog.value?.showModal()
+  if (!stage.value) return
+  viewport.value = { width: stage.value.clientWidth, height: stage.value.clientHeight }
+  observer = new ResizeObserver(([entry]) => {
+    viewport.value = { width: entry.contentRect.width, height: entry.contentRect.height }
+  })
+  observer.observe(stage.value)
+})
+onBeforeUnmount(() => { loader?.abort(); observer?.disconnect(); dialog.value?.close() })
 </script>
 
 <template>
@@ -218,8 +241,10 @@ onBeforeUnmount(() => { loader?.abort(); dialog.value?.close() })
       </header>
       <div ref="stage" class="lightbox-stage" :class="{ 'is-zoomed': scale > 1 }" @click.self="closeFromBackdrop"
         @pointerdown="pointerDown" @pointermove="pointerMove" @pointerup="pointerUp" @pointercancel="pointerUp">
-        <img v-if="source" ref="image" :key="source" :src="source" :alt="caption?.text || '照片'" :class="{ 'is-ready': ready }"
-          :style="{ transform: `translate(${shift.x}px, ${shift.y}px) scale(${scale})` }" draggable="false"
+        <img v-if="source" ref="image" :key="source" :src="source" :srcset="srcset"
+          :sizes="fittedWidth ? `${Math.ceil(fittedWidth * scale)}px` : '100vw'" :alt="caption?.text || '照片'" :class="{ 'is-ready': ready }"
+          :style="{ width: fittedWidth ? `${fittedWidth}px` : undefined, height: fittedWidth ? `${fittedWidth / aspect}px` : undefined,
+            transform: `translate(${shift.x}px, ${shift.y}px) scale(${scale})` }" draggable="false"
           @load="ready = true" @error="imageError" @dblclick.prevent="toggleZoom" />
         <div v-if="loading || source && !ready" class="lightbox-status" role="status"><SSpinner /><span class="sr-only">加载照片</span></div>
         <div v-else-if="!source" class="lightbox-status" role="status">
