@@ -113,6 +113,10 @@ pub fn router(state: AppState) -> Router {
         .route("/jobs/{id}/cancel", post(cancel_job))
         .route("/jobs/{id}/retry", post(retry_job))
         .route("/capabilities", get(capabilities))
+        .route("/public/profile", get(portfolio_profile))
+        .route("/public/collections", get(portfolio_collections))
+        .route("/public/works", get(portfolio_works))
+        .route("/admin/settings/presentation", patch(update_portfolio_profile))
         .route(
             "/variant-profiles/current",
             get(get_profile).put(put_profile),
@@ -242,6 +246,10 @@ fn password_change_allowed(path: &str) -> bool {
         || path.ends_with("/admin/account/password")
         || path.ends_with("/setup/status")
         || path.ends_with("/setup/owner")
+        || path.ends_with("/capabilities")
+        || path.ends_with("/public/profile")
+        || path.ends_with("/public/collections")
+        || path.ends_with("/public/works")
 }
 
 fn readonly_mutation_allowed(method: &Method, path: &str) -> bool {
@@ -482,6 +490,49 @@ fn check_csrf(state: &AppState, headers: &HeaderMap, session: &Session) -> AppRe
         }
     }
     Ok(())
+}
+
+async fn portfolio_profile(State(state): State<AppState>) -> AppResult<Json<crate::portfolio::Profile>> {
+    Ok(Json(crate::portfolio::profile(&state.pool).await?))
+}
+
+async fn portfolio_collections(
+    State(state): State<AppState>,
+) -> AppResult<Json<serde_json::Value>> {
+    Ok(Json(serde_json::json!({"items": crate::portfolio::collections(&state.pool).await?})))
+}
+
+#[derive(Deserialize)]
+struct PortfolioQuery {
+    album_id: Option<String>,
+    limit: Option<i64>,
+    cursor: Option<String>,
+}
+
+async fn portfolio_works(
+    State(state): State<AppState>,
+    Query(query): Query<PortfolioQuery>,
+) -> AppResult<Json<crate::portfolio::WorkPage>> {
+    Ok(Json(crate::portfolio::works(&state.pool, query.album_id.as_deref(), query.limit.unwrap_or(48), query.cursor.as_deref()).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PortfolioInput {
+    title: String,
+    description: String,
+    expected_revision: i64,
+}
+
+async fn update_portfolio_profile(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<PortfolioInput>,
+) -> AppResult<Json<crate::portfolio::Profile>> {
+    let user = require_user(&state, &headers).await?;
+    check_csrf(&state, &headers, &user)?;
+    auth::require_owner(&user.actor)?;
+    Ok(Json(crate::portfolio::write_profile(&state.pool, &body.title, &body.description, body.expected_revision).await?))
 }
 
 async fn setup_status(State(state): State<AppState>) -> AppResult<Json<serde_json::Value>> {
@@ -3903,7 +3954,7 @@ async fn admin_or_spa(State(state): State<AppState>, req: Request) -> Response {
             let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
             let accept_html = req.headers().get(header::ACCEPT).and_then(|value| value.to_str().ok())
                 .is_some_and(|accept| accept.split(',').any(|item| item.trim().starts_with("text/html")));
-            let app_page = matches!(first, "" | "albums" | "library" | "uploads" | "downloads" | "tasks" | "trash" | "settings" | "agent" | "login")
+            let app_page = matches!(first, "" | "albums" | "photos" | "library" | "uploads" | "downloads" | "tasks" | "trash" | "settings" | "agent" | "login")
                 || matches!(path.as_str(), "/admin/setup" | "/admin/unavailable");
             let reserved = matches!(first, "api" | "health" | "assets")
                 || path.rsplit('/').next().is_some_and(|last| last.contains('.'));

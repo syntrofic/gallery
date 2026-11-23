@@ -12,6 +12,7 @@ const ready = ref(false)
 const error = ref('')
 const menuOpen = ref(false)
 const actor = computed(() => account.session.actor)
+const publicSurface = computed(() => route.meta.portfolio || route.query.portfolio === '1' || (!actor.value && !route.meta.authScreen))
 const isOwner = computed(() => actor.value?.role === 'owner')
 const passwordChange = computed(() => actor.value?.must_change_password)
 const visibleLinks = computed(() => [
@@ -66,8 +67,8 @@ async function logout() {
 watch([ready, () => account.initialized, () => actor.value, () => route.fullPath], () => {
   if (!ready.value) return
   menuOpen.value = false
-  document.title = `${route.meta.title || '相册'} · Gallery`
-  if (!account.initialized && route.path !== '/admin/setup') void router.replace('/admin/setup')
+  document.title = route.path === '/' ? account.presentation.title : `${route.meta.title || '相册'} · ${account.presentation.title}`
+  if (!account.initialized && (route.meta.auth || route.meta.owner || route.path === '/login')) void router.replace('/admin/setup')
   else if (passwordChange.value && route.path !== '/settings/account') void router.replace('/settings/account')
   else if (!actor.value && (route.meta.auth || route.meta.owner)) {
     void router.replace({ path: '/login', query: { next: route.fullPath } })
@@ -89,9 +90,24 @@ onUnmounted(() => { events?.close(); if (queued) clearTimeout(queued) })
     </template>
   </div>
   <RouterView v-else-if="route.meta.authScreen" />
+  <div v-else-if="publicSurface" class="public-shell">
+    <header class="public-masthead">
+      <RouterLink to="/" class="public-wordmark">{{ account.presentation.title }}</RouterLink>
+      <nav aria-label="公开画廊" class="public-nav">
+        <RouterLink to="/" :class="{ active: route.path === '/' }">相册</RouterLink>
+        <RouterLink to="/photos" :class="{ active: route.path === '/photos' }">作品</RouterLink>
+        <RouterLink v-if="actor" class="admin-entry" to="/albums">管理</RouterLink>
+        <a v-else class="admin-entry" href="/admin">管理</a>
+      </nav>
+    </header>
+    <main id="gallery-content" :class="{ 'public-inner': !route.meta.portfolio }" tabindex="-1">
+      <Notice :error="error" />
+      <RouterView :key="actor?.id || 'visitor'" />
+    </main>
+  </div>
   <div v-else class="app-shell">
     <header class="masthead">
-      <RouterLink to="/albums" class="wordmark" aria-label="Gallery 首页"><Aperture :size="26" :stroke-width="1.6" /><span>Gallery</span></RouterLink>
+      <RouterLink to="/" class="wordmark" aria-label="公开画廊首页"><Aperture :size="26" :stroke-width="1.6" /><span>{{ account.presentation.title }}</span></RouterLink>
       <div class="mast-actions">
         <span v-if="actor" class="account-name" :title="actor.username">{{ actor.username }}</span>
         <SButton v-if="actor" variant="ghost" @click="logout"><LogOut :size="16" aria-hidden="true" /><span>退出</span></SButton>

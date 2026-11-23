@@ -89,7 +89,7 @@ async fn connection(state: AppState, stream: UnixStream) -> Result<()> {
                         "result": {
                             "protocolVersion": "2025-11-25",
                             "capabilities": {"tools": {"listChanged": false}},
-                            "serverInfo": {"name": "gallery", "version": "0.1.0"}
+                            "serverInfo": {"name": "gallery", "version": env!("CARGO_PKG_VERSION")}
                         }
                     })
                 }

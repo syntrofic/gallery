@@ -3338,6 +3338,78 @@ paths:
                 "$ref": "#/components/schemas/AgentTurn"
         default:
           "$ref": "#/components/responses/GalleryProblem"
+  "/public/profile":
+    get:
+      operationId: portfolio_profile
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/PortfolioProfile"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/public/collections":
+    get:
+      operationId: portfolio_collections
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/PortfolioCollections"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/public/works":
+    get:
+      operationId: portfolio_works
+      security: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/PortfolioWorks"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+      parameters:
+      - in: query
+        name: cursor
+        schema:
+          type: string
+      - in: query
+        name: album_id
+        schema:
+          type: string
+      - in: query
+        name: limit
+        schema:
+          type: integer
+  "/admin/settings/presentation":
+    patch:
+      operationId: update_portfolio_profile
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/PortfolioProfileUpdate"
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/PortfolioProfile"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
 components:
   securitySchemes:
     GallerySession:
@@ -5450,6 +5522,100 @@ components:
         - next_image_id
         - content_revision
         - can_inline_original
+    PortfolioProfile:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        revision:
+          type: integer
+      required:
+      - title
+      - description
+      - revision
+    PortfolioProfileUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        expected_revision:
+          type: integer
+      required:
+      - title
+      - description
+      - expected_revision
+    PortfolioWork:
+      type: object
+      properties:
+        id:
+          type: string
+        album_id:
+          type: string
+        display_name:
+          type: string
+        width:
+          type: integer
+        height:
+          type: integer
+        variants:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Variant"
+      required:
+      - id
+      - album_id
+      - display_name
+      - width
+      - height
+      - variants
+    PortfolioCollection:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        count:
+          type: integer
+        covers:
+          type: array
+          items:
+            "$ref": "#/components/schemas/PortfolioWork"
+      required:
+      - id
+      - name
+      - description
+      - count
+      - covers
+    PortfolioCollections:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/PortfolioCollection"
+      required:
+      - items
+    PortfolioWorks:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/PortfolioWork"
+        next_cursor:
+          type:
+          - string
+          - 'null'
+      required:
+      - items
+      - next_cursor
   parameters:
     XCSRFToken:
       name: X-CSRF-Token

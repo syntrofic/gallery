@@ -13,8 +13,13 @@ const photo = ref<Photo>()
 const id = computed(() => String(route.params.imageId))
 const albumId = computed(() => route.params.albumId ? String(route.params.albumId) : undefined)
 const base = computed(() => albumId.value ? photoPath(albumId.value, id.value) : `/library/images/${pathSegment(id.value)}`)
-const parent = computed(() => albumId.value ? { path: albumPath(albumId.value), query: route.query } : { path: '/library' })
-const owner = computed(() => account.session.actor?.role === 'owner')
+const publicView = computed(() => route.query.portfolio === '1' || !account.session.actor)
+const parent = computed(() => {
+  if (route.query.from === 'home') return { path: '/' }
+  if (route.query.from === 'works') return { path: '/photos', query: route.query.album ? { album: route.query.album } : {} }
+  return albumId.value ? { path: albumPath(albumId.value), query: route.query } : { path: '/library' }
+})
+const owner = computed(() => !publicView.value && account.session.actor?.role === 'owner')
 const canDownload = computed(() => album.value?.capabilities.download ?? owner.value)
 const canView = computed(() => album.value?.capabilities.view_original ?? owner.value)
 const error = ref('')
@@ -134,11 +139,14 @@ onUnmounted(() => { window.removeEventListener('keydown', onKey); loader?.abort(
     <template v-if="photo">
       <div class="viewer-stage" :class="{ zoomed: zoom }">
         <img v-if="imageUrl" :srcset="srcset" :src="imageUrl" sizes="(max-width: 759px) 100vw, calc(100vw - 285px)"
-          :alt="photo.caption?.source === 'human' ? photo.caption.text : photo.display_name" @error="imageError" />
+          :alt="photo.caption?.source === 'human' ? photo.caption.text : publicView ? '照片' : photo.display_name" @error="imageError" />
         <div v-else class="viewer-placeholder"><ImageOff :size="38" :stroke-width="1.25" /><p>预览尚未生成</p></div>
       </div>
       <div class="viewer-caption">
-        <div><h1>{{ photo.display_name }}</h1><p class="page-meta">{{ photo.width }} × {{ photo.height }} 像素</p></div>
+        <div>
+          <h1 v-if="!publicView">{{ photo.display_name }}</h1>
+          <p class="page-meta">{{ photo.width }} × {{ photo.height }} 像素</p>
+        </div>
         <div class="actions">
           <SButton v-if="owner" variant="ghost" aria-label="移入回收站" @click="trashOpen = true"><Trash2 :size="18" /></SButton>
           <SButton v-if="imageUrl" variant="ghost" :aria-pressed="zoom" @click="zoom = !zoom"><ZoomIn :size="17" />{{ zoom ? '适合屏幕' : '原尺寸' }}</SButton>
@@ -148,8 +156,8 @@ onUnmounted(() => { window.removeEventListener('keydown', onKey); loader?.abort(
           </template>
         </div>
       </div>
-      <div v-if="photo.caption || owner || album?.capabilities.edit" class="panel form-stack">
-        <div class="title-row"><h2>照片描述</h2><SButton v-if="owner || album?.capabilities.edit" variant="secondary" @click="draft = photo.caption?.text || ''; editing = true">编辑描述</SButton></div>
+      <div v-if="photo.caption || owner || (!publicView && album?.capabilities.edit)" class="panel form-stack">
+        <div class="title-row"><h2>照片描述</h2><SButton v-if="owner || (!publicView && album?.capabilities.edit)" variant="secondary" @click="draft = photo.caption?.text || ''; editing = true">编辑描述</SButton></div>
         <SBadge v-if="photo.caption?.source === 'model'" class="fit">AI 生成</SBadge>
         <p v-if="photo.caption" class="preserve">{{ photo.caption.text }}</p>
       </div>

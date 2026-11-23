@@ -2358,7 +2358,7 @@ pub async fn spawn_codex_turn(
             "jsonrpc": "2.0",
             "id": 1,
             "method": "initialize",
-            "params": {"clientInfo": {"name": "gallery", "title": "Gallery", "version": "0.1.0"}}
+            "params": {"clientInfo": {"name": "gallery", "title": "Gallery", "version": env!("CARGO_PKG_VERSION")}}
         }))
         .await?;
     let hello = read_response(&mut lines, 1, HANDSHAKE_BUDGET).await?;

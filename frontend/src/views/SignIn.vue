@@ -60,7 +60,7 @@ async function submit() {
         <Notice :error="error" />
         <SButton type="submit" :loading="busy">{{ setup ? '创建管理员' : '登录' }}</SButton>
       </form>
-      <RouterLink v-if="!setup" to="/albums" class="subtle-link">返回公开相册</RouterLink>
+      <RouterLink to="/" class="subtle-link">返回公开画廊</RouterLink>
     </section>
   </main>
 </template>

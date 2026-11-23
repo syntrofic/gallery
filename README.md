@@ -4,14 +4,20 @@
 
 公开接口在 `/api/v1`。设计里的冒号动作路径会在路由前改成斜杠，例如 `images/{id}:trash` 与 `images/{id}/trash` 等价。OpenAPI 3.1 契约在 `openapi/gallery-v1.yaml`，包含请求、响应、错误、二进制下载和事件，样例在 `contracts/examples/`。
 
+## 公开画廊
+
+首页展示已公开的相册，`/photos` 展示同一批公开相册中的全部作品。访客无需登录。所有者可从「管理」进入后台，在「设置 → 概览」填写画廊名称和简介，再进入相册管理打开「允许访客浏览」。私有相册和未加入公开相册的原图不会进入展示页。
+
+作品瀑布流、公开相册和大图查看器默认隐藏文件名。相册、作品和公开相册链接可在手机和桌面浏览。
+
 ## 本地运行
 
 发布页提供 Linux Docker 镜像压缩包。导入与启动：
 
 ```sh
-docker load -i gallery-v0.1.0-linux-amd64.docker.tar.gz
+docker load -i gallery-v0.2.0-linux-amd64.docker.tar.gz
 cp .env.example .env
-# 将 .env 中的 GALLERY_IMAGE 设置为 gallery:v0.1.0
+# 将 .env 中的 GALLERY_IMAGE 设置为 gallery:v0.2.0
 docker compose up -d
 ```
 

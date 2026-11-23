@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { SBadge, SButton, SDialog, SInput, SSpinner } from '@syntrofic/ui'
-import { account, commandKey, errorText, pathSegment, request, type Page } from '../api'
+import { SBadge, SButton, SDialog, SInput, SSpinner, STextArea } from '@syntrofic/ui'
+import { account, commandKey, errorText, pathSegment, request, type Page, type Presentation } from '../api'
 import Notice from '../components/Notice.vue'
 import Status from '../components/Status.vue'
 
@@ -22,6 +22,7 @@ const forced = computed(() => account.session.actor?.must_change_password)
 const page = computed(() => forced.value ? 'account' : String(route.params.section || (owner.value ? 'general' : 'account')))
 const pages = [{ id: 'general', label: '概览' }, { id: 'account', label: '密码' }, { id: 'limits', label: '使用限额' }, { id: 'images', label: '图片规格' }, { id: 'storage', label: '存储' }, { id: 'users', label: '协作者' }, { id: 'backups', label: '备份与恢复' }, { id: 'audit', label: '操作记录' }]
 const settings = ref<Settings>()
+const presentation = ref<Presentation>({ ...account.presentation })
 const profile = ref<Profile>()
 const users = ref<User[]>([])
 const backups = ref<Backup[]>([])
@@ -65,6 +66,7 @@ async function load() {
   try {
     if (['general','limits','storage'].includes(page.value)) {
       settings.value = await request<Settings>('/admin/settings')
+      if (page.value === 'general') presentation.value = { ...account.presentation }
       tmpLimits.value = Object.fromEntries(limitFields.map(field => [field.key, settings.value!.limits[field.key]]))
     } else if (page.value === 'users') users.value = (await request<Page<User>>('/admin/users')).items
     else if (page.value === 'images') profile.value = await request<Profile>('/variant-profiles/current')
@@ -89,6 +91,17 @@ function changePassword() {
     current.value = ''; password.value = ''; repeat.value = ''
     account.session = { actor: null }
     await router.replace('/login')
+  })
+}
+function savePresentation() {
+  void action(async () => {
+    const result = await request<Presentation>('/admin/settings/presentation', {
+      method: 'PATCH', body: { title: presentation.value.title, description: presentation.value.description,
+        expected_revision: presentation.value.revision },
+    })
+    account.presentation = result
+    presentation.value = { ...result }
+    message.value = '公开画廊资料已保存。'
   })
 }
 function saveLimits() {
@@ -198,6 +211,12 @@ onMounted(load)
       <SButton type="submit" :loading="busy" class="fit">保存密码</SButton>
     </form>
     <div v-else-if="page === 'general' && settings" class="manage-grid">
+      <form class="panel form-stack presentation-settings" @submit.prevent="savePresentation">
+        <div class="title-row"><h2>公开画廊</h2><RouterLink to="/" class="subtle-link">查看公开首页</RouterLink></div>
+        <SInput v-model="presentation.title" label="画廊名称" required />
+        <STextArea v-model="presentation.description" label="简介" :rows="3" />
+        <SButton type="submit" :loading="busy" class="fit">保存公开资料</SButton>
+      </form>
       <section class="panel stack"><h2>存储</h2><p>{{ settings.storage.kind }}</p><RouterLink to="/settings/storage" class="subtle-link">查看存储配置</RouterLink></section>
       <section class="panel stack"><h2>图库助手</h2><SBadge :tone="settings.ai.enabled ? 'success' : 'neutral'" class="fit">{{ settings.ai.enabled ? '已启用' : '未启用' }}</SBadge><p v-if="!settings.ai.enabled" class="page-meta">通过服务端配置启用 AI。</p><RouterLink v-else to="/agent" class="subtle-link">打开图库助手</RouterLink></section>
       <section class="panel stack"><h2>备份</h2><RouterLink to="/settings/backups" class="subtle-link">查看快照、演练和异地副本</RouterLink></section>

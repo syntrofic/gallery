@@ -52,6 +52,9 @@ export interface Photo {
   lifecycle_revision?: number
   revision?: number
 }
+export interface Presentation { title: string; description: string; revision: number }
+export interface Work extends Photo { album_id: string; variants: Variant[] }
+export interface Collection { id: string; name: string; description: string; count: number; covers: Work[] }
 export interface Page<T> { items: T[]; next_cursor: string | null }
 export interface Job {
   id: string
@@ -95,6 +98,7 @@ export class ApiError extends Error {
 
 export const account = reactive({
   initialized: true,
+  presentation: { title: "Gallery", description: "", revision: 0 } as Presentation,
   session: { actor: null } as Session,
   capabilities: null as Capabilities | null,
   event: 0,
@@ -149,14 +153,16 @@ export async function request<T>(path: string, opts: {
 }
 
 export async function loadAccount() {
-  const [session, setup, capabilities] = await Promise.all([
+  const [session, setup, capabilities, presentation] = await Promise.all([
     request<Session>('/session'),
     request<{ initialized: boolean }>('/setup/status'),
     request<Capabilities>('/capabilities'),
+    request<Presentation>('/public/profile'),
   ])
   account.session = session
   account.initialized = setup.initialized
   account.capabilities = capabilities
+  account.presentation = presentation
 }
 
 export function statusText(state?: string) {

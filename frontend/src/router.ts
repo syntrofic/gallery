@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Albums from './views/Albums.vue'
+import Portfolio from './views/Portfolio.vue'
 import Album from './views/Album.vue'
 import Viewer from './views/Viewer.vue'
 import SignIn from './views/SignIn.vue'
@@ -13,7 +14,8 @@ import NotFound from './views/NotFound.vue'
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', redirect: '/albums' },
+    { path: '/', component: Portfolio, meta: { title: '相册', portfolio: true } },
+    { path: '/photos', component: Portfolio, meta: { title: '作品', portfolio: true } },
     { path: '/albums', component: Albums, meta: { title: '相册' } },
     { path: '/albums/:albumId', component: Album, meta: { title: '相册' } },
     { path: '/albums/:albumId/manage', component: Album, meta: { title: '管理相册', auth: true } },

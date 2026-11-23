@@ -11,6 +11,7 @@ const route = useRoute()
 const router = useRouter()
 const id = computed(() => String(route.params.albumId))
 const base = computed(() => albumPath(id.value))
+const publicView = computed(() => route.query.portfolio === '1' || !account.session.actor)
 const isManage = computed(() => route.path.endsWith('/manage'))
 const owner = computed(() => account.session.actor?.role === 'owner')
 const album = ref<Album>()
@@ -85,7 +86,7 @@ async function load(append = false, background = false) {
 }
 async function changeFilter() {
   chosen.value = []
-  await router.replace({ path: route.path, query: { q: filter.value || undefined, sort: sort.value === 'manual' ? undefined : sort.value } })
+  await router.replace({ path: route.path, query: { portfolio: publicView.value ? '1' : undefined, q: filter.value || undefined, sort: sort.value === 'manual' ? undefined : sort.value } })
   await load()
 }
 function toggle(id: string) {
@@ -205,7 +206,7 @@ onUnmounted(() => { controller?.abort(); mediaQuery.removeEventListener('change'
 
 <template>
   <section class="stack">
-    <div class="breadcrumbs"><RouterLink to="/albums">相册</RouterLink><span>/</span><span>{{ album?.name || '详情' }}</span></div>
+    <div class="breadcrumbs"><RouterLink :to="publicView ? '/' : '/albums'">相册</RouterLink><span>/</span><span>{{ album?.name || '详情' }}</span></div>
     <div v-if="loading && !album" class="loading" role="status"><SSpinner /> 正在加载相册</div>
     <Notice :error="error" :message="message" />
     <SButton v-if="error && !album" variant="secondary" class="fit" @click="load()">重试</SButton>
@@ -215,8 +216,8 @@ onUnmounted(() => { controller?.abort(); mediaQuery.removeEventListener('change'
         <div class="actions">
           <RouterLink v-if="isManage" :to="base" class="inline-action">返回相册</RouterLink>
           <template v-else>
-            <RouterLink v-if="album.capabilities.edit" :to="`${base}/manage`" class="inline-action"><Settings2 :size="17" />管理</RouterLink>
-            <RouterLink v-if="album.capabilities.upload && account.session.actor" :to="{ path: '/uploads', query: { album: id } }" class="inline-action primary-link"><CloudUpload :size="17" />上传照片</RouterLink>
+            <RouterLink v-if="album.capabilities.edit && !publicView" :to="`${base}/manage`" class="inline-action"><Settings2 :size="17" />管理</RouterLink>
+            <RouterLink v-if="album.capabilities.upload && account.session.actor && !publicView" :to="{ path: '/uploads', query: { album: id } }" class="inline-action primary-link"><CloudUpload :size="17" />上传照片</RouterLink>
           </template>
         </div>
       </div>
@@ -266,9 +267,9 @@ onUnmounted(() => { controller?.abort(); mediaQuery.removeEventListener('change'
               <option value="created_asc">最早上传</option><option value="name_asc">名称</option>
             </select>
           </label>
-          <SButton v-if="account.session.actor && (album.capabilities.edit || album.capabilities.download)" variant="secondary" :aria-pressed="selecting"
+          <SButton v-if="account.session.actor && !publicView && (album.capabilities.edit || album.capabilities.download)" variant="secondary" :aria-pressed="selecting"
             @click="selecting = !selecting; chosen = []; claims = []">{{ selecting ? '退出选择' : '选择照片' }}</SButton>
-          <SButton v-if="desktop && album.capabilities.download && album.archive_enabled && account.session.actor" variant="secondary" :loading="busy" @click="archive">
+          <SButton v-if="desktop && !publicView && album.capabilities.download && album.archive_enabled && account.session.actor" variant="secondary" :loading="busy" @click="archive">
             <ArrowDownToLine :size="16" aria-hidden="true" />整册 ZIP
           </SButton>
         </div>
@@ -297,9 +298,9 @@ onUnmounted(() => { controller?.abort(); mediaQuery.removeEventListener('change'
             <PhotoTile :photo="photo" :album="id" :label="photo.display_name" :eager="index < 4" />
             <span class="item-name">{{ photo.display_name }}</span>
           </button>
-          <RouterLink v-else :to="{ path: photoPath(id, photo.id), query: route.query }">
+          <RouterLink v-else :to="{ path: photoPath(id, photo.id), query: route.query }" :aria-label="publicView ? photo.display_name : undefined">
             <PhotoTile :photo="photo" :album="id" :label="photo.display_name" :eager="index < 4" />
-            <span class="item-name">{{ photo.display_name }}</span>
+            <span v-if="!publicView" class="item-name">{{ photo.display_name }}</span>
           </RouterLink>
           <div v-if="isManage && album.capabilities.edit && sort === 'manual' && !filter" class="sort-controls">
             <SButton variant="ghost" size="sm" :disabled="!index || busy" :aria-label="`上移 ${photo.display_name}`" @click="shift(index, -1)"><ArrowUp :size="15" /></SButton>

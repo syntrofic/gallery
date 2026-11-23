@@ -19,6 +19,7 @@ pub mod ids;
 pub mod jobs;
 pub mod mcp;
 pub mod migrate_storage;
+pub mod portfolio;
 pub mod processing;
 pub mod recovery;
 pub mod scheduler;
