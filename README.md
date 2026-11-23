@@ -14,12 +14,14 @@ Gallery 是一个可自托管的照片画廊，适合发布个人作品和分享
 
 ## 自托管
 
-在 [GitHub Releases](https://github.com/syntrofic/gallery/releases/latest) 下载对应架构的 Docker 镜像和 SHA-256 校验文件。导入镜像后，复制 `.env.example` 为 `.env`，将 `GALLERY_IMAGE` 设为镜像的标签，再启动服务。
+在 Linux 主机上，用仓库里的 `compose.yaml` 启动服务。下载对应架构的 Docker 镜像和 SHA-256 校验文件。 [GitHub Releases](https://github.com/syntrofic/gallery/releases/latest)
 
 ```sh
 docker load -i gallery-v0.2.4-linux-amd64.docker.tar.gz
 cp .env.example .env
-# 在 .env 中设置 GALLERY_IMAGE=gallery:v0.2.4
+# 在 .env 中设置 GALLERY_IMAGE=gallery:v0.2.4 和 GALLERY_ADMIN_PASSWORD
+mkdir -p gallery-data
+sudo chown 10001:10001 gallery-data
 docker compose up -d
 ```
 
