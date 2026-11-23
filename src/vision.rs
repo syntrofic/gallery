@@ -23,6 +23,10 @@ fn vision_url() -> String {
 
 pub fn inference_png(bytes: &[u8]) -> Result<(Vec<u8>, String)> {
     let img = image::load_from_memory(bytes).map_err(|e| anyhow!("permanent:FORMAT {e}"))?;
+    encode_inference_png(img)
+}
+
+fn encode_inference_png(img: image::DynamicImage) -> Result<(Vec<u8>, String)> {
     let (w, h) = (img.width(), img.height());
     let long = w.max(h);
     let scaled = if long <= MAX_EDGE {
@@ -76,9 +80,17 @@ pub async fn caption_image(state: &AppState, payload_json: &str) -> Result<()> {
         return Ok(());
     }
     let media = state.media().await?;
-    let (key, _, _, _) = crate::storage::location_for(&state.pool, &blob_id, &media.backend_id).await?;
-    let original = media.get_bytes(&key).await?;
-    let input = load_inference_input(&state.pool, &media, &image_id, &original).await?;
+    let input = match published_inference_input(&state.pool, &media, &image_id).await? {
+        Some(input) => input,
+        None => {
+            let (key, size, sha, _) =
+                crate::storage::location_for(&state.pool, &blob_id, &media.backend_id).await?;
+            let original = tempfile::NamedTempFile::new_in(state.config.work_root())?;
+            media.copy_verified(&key, size, &sha, original.path()).await?;
+            let (bytes, sha) = encode_inference_png(crate::processing::decode_file(original.path())?)?;
+            InferenceInput { bytes, sha, mime: "image/png".into(), reused_spec: None }
+        }
+    };
     let input_sha = input.sha.clone();
     let existing: Option<(String,)> = sqlx::query_as(
         "SELECT input_sha FROM captions
@@ -191,6 +203,18 @@ pub async fn load_inference_input(
     image_id: &str,
     original: &[u8],
 ) -> Result<InferenceInput> {
+    if let Some(input) = published_inference_input(pool, media, image_id).await? {
+        return Ok(input);
+    }
+    let (bytes, sha) = inference_png(original)?;
+    Ok(InferenceInput { bytes, sha, mime: "image/png".into(), reused_spec: None })
+}
+
+async fn published_inference_input(
+    pool: &sqlx::SqlitePool,
+    media: &crate::storage::Storage,
+    image_id: &str,
+) -> Result<Option<InferenceInput>> {
     let rows = sqlx::query_as::<_, (String, Option<i64>, Option<i64>, i64, String, String)>(
         "SELECT v.spec_id, v.width, v.height, b.size, b.mime, l.object_key
          FROM variant_heads h
@@ -212,32 +236,23 @@ pub async fn load_inference_input(
         .collect();
     ranked.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
     for (_long, spec, mime, key) in ranked {
-        let Ok(bytes) = media.get_bytes(&key).await else {
+        let Ok(bytes) = media.read_bounded(&key, MAX_BYTES).await else {
             continue;
         };
-        if bytes.len() > MAX_BYTES {
-            continue;
-        }
         let Ok(decoded) = image::load_from_memory(&bytes) else {
             continue;
         };
         if decoded.width().max(decoded.height()) > MAX_EDGE {
             continue;
         }
-        return Ok(InferenceInput {
+        return Ok(Some(InferenceInput {
             sha: sha256_hex(&bytes),
             mime,
             reused_spec: Some(spec),
             bytes,
-        });
+        }));
     }
-    let (bytes, sha) = inference_png(original)?;
-    Ok(InferenceInput {
-        bytes,
-        sha,
-        mime: "image/png".into(),
-        reused_spec: None,
-    })
+    Ok(None)
 }
 
 async fn describe_image(bytes: &[u8], mime: &str) -> Result<VisionReply> {
@@ -246,6 +261,7 @@ async fn describe_image(bytes: &[u8], mime: &str) -> Result<VisionReply> {
     let body = serde_json::json!({
         "model": model_key(),
         "max_tokens": 256,
+        "reasoning": {"enabled": false},
         "messages": [{
             "role": "user",
             "content": [

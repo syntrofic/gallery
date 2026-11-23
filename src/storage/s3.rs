@@ -274,6 +274,26 @@ impl MediaBackend for S3Backend {
         }
     }
 
+    async fn stream(&self, key: &str) -> Result<super::ObjectStream> {
+        use futures_util::TryStreamExt;
+        let response = self.client().await?.get_object()
+            .bucket(&self.bucket)
+            .key(self.key(key))
+            .send()
+            .await
+            .map_err(|err| {
+                if err.as_service_error().is_some_and(|err| err.is_no_such_key())
+                    || err.raw_response().is_some_and(|response| response.status().as_u16() == 404)
+                {
+                    anyhow!("storage missing")
+                } else {
+                    anyhow!("storage unavailable: {err}")
+                }
+            })?;
+        Ok(Box::pin(tokio_util::io::ReaderStream::new(response.body.into_async_read())
+            .map_err(anyhow::Error::from)))
+    }
+
     async fn delete(&self, key: &str) -> Result<()> {
         let client = self.client().await?;
         client

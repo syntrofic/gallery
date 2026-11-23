@@ -647,6 +647,58 @@ pub async fn post_message(
     ))
 }
 
+pub async fn dispatch_queued_message(
+    pool: &SqlitePool,
+    actor: &Actor,
+    session_id: &str,
+) -> AppResult<serde_json::Value> {
+    if crate::config::openrouter_key().is_none() {
+        return Err(AppError::gated("OpenRouter credentials"));
+    }
+    let mut tx = crate::db::begin_immediate(pool).await.map_err(anyhow::Error::from)?;
+    let state: String = sqlx::query_scalar(
+        "SELECT state FROM agent_sessions WHERE id = ? AND actor_id = ?",
+    ).bind(session_id).bind(&actor.id).fetch_optional(&mut *tx).await
+        .map_err(anyhow::Error::from)?.ok_or_else(AppError::not_found)?;
+    if state == "archived" || state == "needs_reconcile" {
+        return Err(AppError::conflict("SESSION_UNAVAILABLE", "the session is closed or needs reconciliation"));
+    }
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM agent_turns WHERE session_id = ?
+         AND state IN ('queued', 'starting', 'running', 'stop_requested')",
+    ).bind(session_id).fetch_one(&mut *tx).await.map_err(anyhow::Error::from)?;
+    if count != 0 {
+        return Err(AppError::conflict("TURN_ACTIVE", "a turn is already running"));
+    }
+    let message: (String, String) = sqlx::query_as(
+        "SELECT id, body FROM agent_messages WHERE session_id = ? AND delivery_state = 'queued' ORDER BY seq LIMIT 1",
+    ).bind(session_id).fetch_optional(&mut *tx).await.map_err(anyhow::Error::from)?
+        .ok_or_else(|| AppError::conflict("NO_QUEUED_MESSAGE", "there is no queued message to run"))?;
+    let turn = new_id();
+    let now = crate::db::now_ms();
+    sqlx::query(
+        "INSERT INTO agent_turns(id, session_id, state, created_at) VALUES(?, ?, 'starting', ?)",
+    ).bind(&turn).bind(session_id).bind(now).execute(&mut *tx).await.map_err(anyhow::Error::from)?;
+    sqlx::query("UPDATE agent_messages SET delivery_state = 'dispatching' WHERE id = ?")
+        .bind(&message.0).execute(&mut *tx).await.map_err(anyhow::Error::from)?;
+    tx.commit().await.map_err(anyhow::Error::from)?;
+
+    let (pool, actor, session_id, turn_id) = (pool.clone(), actor.clone(), session_id.to_owned(), turn.clone());
+    tokio::spawn(async move {
+        let result = spawn_codex_turn(&pool, &actor, &session_id, &turn_id, &message.1, None).await;
+        if let Err(err) = &result {
+            // Only the state is sent to clients. Provider diagnostics may contain private data.
+            let code = match err { AppError::Problem { code, .. } => *code, _ => "INTERNAL" };
+            tracing::warn!(turn_id = %turn_id, code, "Gallery Agent turn failed");
+            let _ = mark_turn(&pool, &turn_id, "failed").await;
+        }
+        let delivery = if result.is_ok() { "accepted" } else { "delivery_unknown" };
+        let _ = sqlx::query("UPDATE agent_messages SET delivery_state = ? WHERE id = ? AND delivery_state = 'dispatching'")
+            .bind(delivery).bind(&message.0).execute(&pool).await;
+    });
+    Ok(serde_json::json!({"id": turn, "state": "starting"}))
+}
+
 pub async fn remove_message(
     pool: &SqlitePool,
     actor: &Actor,
@@ -797,8 +849,8 @@ async fn newer_turn_exists(pool: &SqlitePool, turn_id: &str) -> AppResult<bool> 
 }
 
 pub async fn get_session(pool: &SqlitePool, actor: &Actor, id: &str) -> AppResult<serde_json::Value> {
-    let row = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT id, actor_id, state FROM agent_sessions WHERE id = ?",
+    let row = sqlx::query_as::<_, (String, String, String, i64, String)>(
+        "SELECT id, actor_id, state, revision, scope_json FROM agent_sessions WHERE id = ?",
     )
     .bind(id)
     .fetch_optional(pool)
@@ -808,9 +860,9 @@ pub async fn get_session(pool: &SqlitePool, actor: &Actor, id: &str) -> AppResul
     if row.1 != actor.id && actor.role != "owner" {
         return Err(AppError::not_found());
     }
-    let actions = sqlx::query_as::<_, (String, Option<String>, String, Option<String>)>(
-        "SELECT id, tool_name, state, result_ref FROM agent_actions
-         WHERE session_id = ? AND state = 'committed' ORDER BY created_at",
+    let actions = sqlx::query_as::<_, (String, Option<String>, String, Option<String>, i64)>(
+        "SELECT id, tool_name, state, result_ref, plan_revision FROM agent_actions
+         WHERE session_id = ? AND state IN ('proposed', 'committed') ORDER BY created_at",
     )
     .bind(id)
     .fetch_all(pool)
@@ -828,13 +880,22 @@ pub async fn get_session(pool: &SqlitePool, actor: &Actor, id: &str) -> AppResul
     .fetch_all(pool)
     .await
     .map_err(anyhow::Error::from)?;
+    let turn: Option<(String, String)> = sqlx::query_as(
+        "SELECT id, state FROM agent_turns WHERE session_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+    ).bind(id).fetch_optional(pool).await.map_err(anyhow::Error::from)?;
+    let scope: serde_json::Value = serde_json::from_str(&row.4).map_err(anyhow::Error::from)?;
     Ok(serde_json::json!({
         "id": row.0,
         "state": row.2,
-        "actions": actions.into_iter().map(|(id, tool, state, result)| serde_json::json!({
+        "revision": row.3,
+        "scope": scope,
+        "turn_id": turn.as_ref().map(|turn| &turn.0),
+        "turn_state": turn.as_ref().map(|turn| &turn.1),
+        "actions": actions.into_iter().map(|(id, tool, state, result, revision)| serde_json::json!({
             "id": id,
             "tool_name": tool,
             "state": state,
+            "revision": revision,
             "result_ref": result
         })).collect::<Vec<_>>(),
         "running_jobs": jobs.into_iter().map(|(id, kind, state)| serde_json::json!({
@@ -2230,7 +2291,8 @@ pub async fn spawn_codex_turn(
     let (program, args) = codex_launch(bin);
     let codex_home = std::env::var("GALLERY_CODEX_HOME")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from(".codex-home"));
+        .unwrap_or_else(|_| std::path::PathBuf::from(".codex-home"))
+        .join(session_id);
     let mcp = codex_mcp_config(pool, session_id).await;
     prepare_codex_home(&codex_home, &mcp)?;
     let mut command = tokio::process::Command::new(&program);

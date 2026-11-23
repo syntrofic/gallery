@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use std::path::PathBuf;
 
 use crate::app::AppState;
 use crate::processing::{CodecOp, CodecPlan};
@@ -26,6 +25,8 @@ pub async fn execute(
             crate::download::build_zip(state, archive_id).await
         }
         "purge_media" => purge_media(state, payload_json).await,
+        "backup_replica" => crate::backup_maintenance::run_replica(state, payload_json).await,
+        "restore_drill" => crate::backup_maintenance::run_drill(state, payload_json).await,
         "backup" => crate::backup::run_backup(state, payload_json).await,
         "restore" => crate::backup::run_restore(state, payload_json).await,
         "storage_migrate_copy" => crate::migrate_storage::copy_item(state, payload_json).await,
@@ -115,13 +116,20 @@ async fn generate_variant(
     }
     let (route_backend, route_epoch) = crate::db::current_route(&state.pool).await?;
     let media = crate::storage::open_by_id(&state.pool, &route_backend).await?;
-    let (key, _, _, _) =
+    let (key, size, sha, _) =
         crate::storage::location_for(&state.pool, &image.0, &media.backend_id).await?;
-    let original = media.get_bytes(&key).await?;
-    let work = state.config.work_root().join("codec").join(job_id);
-    std::fs::create_dir_all(&work)?;
+    let root = state.config.work_root().join("codec");
+    std::fs::create_dir_all(&root)?;
+    let attempt = tempfile::Builder::new().prefix(job_id).tempdir_in(root)?;
+    let work = attempt.path().to_path_buf();
     let input = work.join("original.bin");
-    std::fs::write(&input, &original)?;
+    media.copy_verified(&key, size, &sha, &input).await.map_err(|err| {
+        if err.is::<crate::storage::ObjectMismatch>() {
+            anyhow!("permanent:UNDECODABLE original failed integrity check")
+        } else {
+            err
+        }
+    })?;
     let spec = specs
         .into_iter()
         .find(|s| s.spec_id == spec_id)
@@ -152,7 +160,6 @@ async fn generate_variant(
         .await?
     };
     let out = results.into_iter().next().ok_or_else(|| anyhow!("no output"))?;
-    let bytes = std::fs::read(&out.output_path)?;
     let image_state = sqlx::query_as::<_, (String,)>("SELECT state FROM images WHERE id = ?")
         .bind(image_id)
         .fetch_one(&state.pool)
@@ -173,7 +180,7 @@ async fn generate_variant(
     let mut staged = false;
     if already.is_none() {
         media
-            .put_bytes(&object_key, &bytes, &out.mime)
+            .backend().put_file(&object_key, &out.output_path, &out.mime)
             .await?;
         staged = true;
     }
@@ -355,14 +362,15 @@ async fn convert_image(
         .fetch_one(&state.pool)
         .await?;
     let media = state.media().await?;
-    let (key, _, _, _) =
+    let (key, size, sha, _) =
         crate::storage::location_for(&state.pool, &blob_id, &media.backend_id).await?;
-    let original = media.get_bytes(&key).await?;
-    let work = PathBuf::from(state.config.work_root()).join("convert").join(job_id);
-    std::fs::create_dir_all(&work)?;
+    let root = state.config.work_root().join("convert");
+    std::fs::create_dir_all(&root)?;
+    let attempt = tempfile::Builder::new().prefix(job_id).tempdir_in(root)?;
+    let work = attempt.path().to_path_buf();
     let input = work.join("in.bin");
     let output = work.join("out.bin");
-    std::fs::write(&input, original)?;
+    media.copy_verified(&key, size, &sha, &input).await?;
     let plan = CodecPlan {
         plan_id: conversion_id.to_string(),
         ops: vec![CodecOp {
@@ -378,10 +386,9 @@ async fn convert_image(
     };
     let results = crate::processing::execute_plan(&plan)?;
     let out = results.into_iter().next().ok_or_else(|| anyhow!("no output"))?;
-    let bytes = std::fs::read(&out.output_path)?;
     let object_key = format!("work/conversions/{conversion_id}");
     media
-        .put_bytes(&object_key, &bytes, &out.mime)
+        .backend().put_file(&object_key, &out.output_path, &out.mime)
         .await?;
     if !lease_held(&state.pool, lease).await? {
         discard_own_staging(state, &work, Some(&object_key)).await?;

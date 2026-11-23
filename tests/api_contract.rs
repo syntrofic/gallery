@@ -79,3 +79,17 @@ fn openapi_and_examples_share_job_shape() {
     }
     assert_eq!(job["progress"]["done"], 0);
 }
+
+#[test]
+fn openapi_covers_every_router_path() {
+    let routing = include_str!("../src/scheduler.rs").split("pub fn router(").nth(1).unwrap()
+        .split("async fn record_request_faults").next().unwrap();
+    let openapi = include_str!("../openapi/gallery-v1.yaml");
+    for route in routing.split(".route(").skip(1) {
+        let path = route.trim_start().split('"').nth(1).unwrap();
+        let paths = openapi.lines().filter_map(|line| line.strip_prefix("  "))
+            .filter_map(|line| line.strip_suffix(':'))
+            .map(|key| key.trim_matches(['"', '\'']));
+        assert!(paths.into_iter().any(|key| key == path), "missing API path {path}");
+    }
+}

@@ -1,6 +1,6 @@
 use axum::body::Body;
 use axum::extract::{Path, Query, Request, State};
-use axum::http::{header, HeaderMap, Method, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
 use axum::response::{IntoResponse, Response, Sse};
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
@@ -150,6 +150,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ai/scans/{id}/cancel", post(cancel_scan))
         .route("/agent/sessions", get(list_agent).post(create_agent))
         .route("/agent/sessions/{id}", get(get_agent))
+        .route("/agent/sessions/{id}/dispatch", post(agent_dispatch))
         .route("/agent/sessions/{id}/messages", get(agent_messages).post(agent_post_message))
         .route(
             "/agent/sessions/{id}/messages/{message_id}/remove",
@@ -188,8 +189,22 @@ pub fn router(state: AppState) -> Router {
         .layer(axum::middleware::from_fn(limit_json_body));
 
     let faults = state.clone();
-    Router::new()
-        .route("/health/live", get(live))
+    let app = Router::new();
+    let app = if let Some(root) = &state.config.web_root {
+        let assets = axum::Router::new().fallback_service(
+            tower_http::services::ServeDir::new(root.join("assets"))
+                .append_index_html_on_directories(false),
+        ).layer(axum::middleware::map_response(|mut response: Response| async move {
+            if response.status().is_success() {
+                response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=31536000, immutable"));
+            }
+            response
+        }));
+        app.nest("/assets", assets)
+    } else {
+        app
+    };
+    app.route("/health/live", get(live))
         .route("/health/ready", get(ready))
         .nest("/api/v1", api)
         .fallback(admin_or_spa)
@@ -1691,7 +1706,17 @@ async fn get_album(
 ) -> AppResult<Response> {
     let actor = session_from(&state, &headers).await.map(|s| s.actor);
     let view = crate::album::get(&state.pool, actor.as_ref(), &album_id).await?;
-    let value = serde_json::to_value(&view).map_err(anyhow::Error::from)?;
+    let mut value = serde_json::to_value(&view).map_err(anyhow::Error::from)?;
+    if actor.as_ref().is_some_and(|actor| actor.role == "owner") {
+        let grants: Vec<(String, bool, bool, bool, bool, bool)> = sqlx::query_as(
+            "SELECT actor_id, browse, edit, upload, view_original, download FROM album_grants
+             WHERE album_id = ? ORDER BY actor_id",
+        ).bind(&album_id).fetch_all(&state.pool).await.map_err(anyhow::Error::from)?;
+        value["grants"] = serde_json::json!(grants.into_iter().map(|(actor_id, browse, edit, upload, view_original, download)| {
+            serde_json::json!({ "actor_id": actor_id, "browse": browse, "edit": edit,
+                "upload": upload, "view_original": view_original, "download": download })
+        }).collect::<Vec<_>>());
+    }
     Ok(with_revision_etag(StatusCode::OK, value))
 }
 
@@ -1792,37 +1817,41 @@ async fn get_image(
 ) -> AppResult<Json<serde_json::Value>> {
     let actor = session_from(&state, &headers).await.map(|s| s.actor);
     let album = crate::album::get(&state.pool, actor.as_ref(), &album_id).await?;
-    let listed = crate::album::list_images(
-        &state.pool,
-        actor.as_ref(),
-        &album_id,
-        q.sort.as_deref().unwrap_or("manual"),
-        q.q.as_deref(),
-        200,
-        None,
-    )
-    .await?;
-    let items = listed["items"].as_array().cloned().unwrap_or_default();
-    let idx = items.iter().position(|i| i["id"] == image_id).ok_or_else(AppError::not_found)?;
-    let prev = if idx > 0 { items[idx - 1]["id"].as_str().map(|s| s.to_string()) } else { None };
-    let next = items.get(idx + 1).and_then(|i| i["id"].as_str().map(|s| s.to_string()));
-    let mut current = items[idx].clone();
-    current["previous_image_id"] = serde_json::json!(prev);
-    current["next_image_id"] = serde_json::json!(next);
-    current["content_revision"] = serde_json::json!(album.content_revision);
-    let original_mime = sqlx::query_as::<_, (String,)>("SELECT original_mime FROM images WHERE id = ?")
-        .bind(&image_id)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(anyhow::Error::from)?
-        .map(|row| row.0)
-        .unwrap_or_default();
+    let order = match q.sort.as_deref().unwrap_or("manual") {
+        "created_desc" => "i.created_at DESC, i.id DESC",
+        "created_asc" => "i.created_at ASC, i.id ASC",
+        "name_asc" => "COALESCE(ai.display_name, i.original_name) ASC, i.id ASC",
+        _ => "ai.sort_key ASC, i.id ASC",
+    };
+    let sql = format!(
+        "WITH ordered AS (
+            SELECT i.id, COALESCE(ai.display_name, i.original_name) AS name, i.width, i.height,
+              i.created_at, i.original_mime, i.revision, i.lifecycle_revision,
+              lag(i.id) OVER (ORDER BY {order}) AS previous,
+              lead(i.id) OVER (ORDER BY {order}) AS next
+            FROM album_images ai JOIN images i ON i.id = ai.image_id
+            WHERE ai.album_id = ? AND i.state = 'active'
+              AND (? IS NULL OR i.original_name LIKE '%' || ? || '%' OR i.id = ?)
+        ) SELECT name,width,height,created_at,original_mime,revision,lifecycle_revision,previous,next
+           FROM ordered WHERE id = ?",
+    );
+    let (name, width, height, created, original_mime, revision, lifecycle, previous, next):
+        (String, i64, i64, i64, String, i64, i64, Option<String>, Option<String>) =
+        sqlx::query_as(&sql).bind(&album_id).bind(q.q.as_deref()).bind(q.q.as_deref())
+            .bind(&image_id).bind(&image_id).fetch_optional(&state.pool).await
+            .map_err(anyhow::Error::from)?.ok_or_else(AppError::not_found)?;
+    let mut current = serde_json::json!({
+        "id": image_id, "display_name": name, "width": width, "height": height,
+        "created_at": crate::db::rfc3339(created), "revision": revision, "lifecycle_revision": lifecycle,
+        "previous_image_id": previous, "next_image_id": next, "content_revision": album.content_revision,
+    });
     current["can_inline_original"] = serde_json::json!(
         album.capabilities.view_original && crate::processing::browser_inline_safe(&original_mime)
     );
     let published = crate::versions::published_variants(&state.pool, &image_id)
         .await
         .map_err(anyhow::Error::from)?;
+    current["variants"] = serde_json::json!(&published);
     current["selection"] = variant_selection(&published);
     current["srcset"] = srcset_json(&published);
     current["placeholder"] = serde_json::json!(crate::versions::detail_srcset(&published).is_empty());
@@ -3186,8 +3215,8 @@ async fn library_image(
     if s.actor.role != "owner" {
         return Err(AppError::not_found());
     }
-    let row = sqlx::query_as::<_, (String, i64, i64)>(
-        "SELECT original_name, width, height FROM images WHERE id = ?",
+    let row = sqlx::query_as::<_, (String, i64, i64, i64, i64, String, String)>(
+        "SELECT original_name, width, height, revision, lifecycle_revision, original_mime, state FROM images WHERE id = ?",
     )
     .bind(&image_id)
     .fetch_optional(&state.pool)
@@ -3197,11 +3226,19 @@ async fn library_image(
     let variants = crate::versions::published_variants(&state.pool, &image_id)
         .await
         .map_err(anyhow::Error::from)?;
+    let caption: Option<(String, String)> = sqlx::query_as(
+        "SELECT source,text FROM captions WHERE image_id = ?
+         ORDER BY CASE source WHEN 'human' THEN 0 ELSE 1 END LIMIT 1",
+    ).bind(&image_id).fetch_optional(&state.pool).await.map_err(anyhow::Error::from)?;
     Ok(Json(serde_json::json!({
         "id": image_id,
         "display_name": row.0,
         "width": row.1,
         "height": row.2,
+        "revision": row.3,
+        "lifecycle_revision": row.4,
+        "can_inline_original": row.6 == "active" && crate::processing::browser_inline_safe(&row.5),
+        "caption": caption.map(|(source, text)| serde_json::json!({"source": source, "text": text})),
         "variants": variants,
         "selection": variant_selection(&variants),
         "srcset": srcset_json(&variants),
@@ -3348,14 +3385,14 @@ async fn list_trash(State(state): State<AppState>, headers: HeaderMap) -> AppRes
     if s.actor.role != "owner" {
         return Err(AppError::not_found());
     }
-    let rows = sqlx::query_as::<_, (String, String)>(
-        "SELECT id, original_name FROM images WHERE state = 'trashed' ORDER BY deleted_at DESC",
+    let rows = sqlx::query_as::<_, (String, String, i64)>(
+        "SELECT id, original_name, lifecycle_revision FROM images WHERE state = 'trashed' ORDER BY deleted_at DESC",
     )
     .fetch_all(&state.pool)
     .await
     .map_err(anyhow::Error::from)?;
     Ok(Json(serde_json::json!({
-        "items": rows.into_iter().map(|(id, name)| serde_json::json!({"id": id, "display_name": name})).collect::<Vec<_>>()
+        "items": rows.into_iter().map(|(id, name, lifecycle_revision)| serde_json::json!({"id": id, "display_name": name, "lifecycle_revision": lifecycle_revision})).collect::<Vec<_>>()
     })))
 }
 
@@ -3451,6 +3488,20 @@ async fn get_agent(
 ) -> AppResult<Json<serde_json::Value>> {
     let s = require_user(&state, &headers).await?;
     Ok(Json(crate::ai::get_session(&state.pool, &s.actor, &id).await?))
+}
+
+async fn agent_dispatch(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> AppResult<impl IntoResponse> {
+    let session = require_user(&state, &headers).await?;
+    check_csrf(&state, &headers, &session)?;
+    if !state.config.ai_enabled {
+        return Err(AppError::gated("agent"));
+    }
+    let result = crate::ai::dispatch_queued_message(&state.pool, &session.actor, &id).await?;
+    Ok((StatusCode::ACCEPTED, Json(result)))
 }
 
 async fn agent_messages(
@@ -3846,6 +3897,27 @@ async fn admin_or_spa(State(state): State<AppState>, req: Request) -> Response {
                     "/admin/unavailable".to_string()
                 };
                 return page_redirect(StatusCode::SEE_OTHER, &location, true);
+            }
+        }
+        if let Some(root) = &state.config.web_root {
+            let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
+            let accept_html = req.headers().get(header::ACCEPT).and_then(|value| value.to_str().ok())
+                .is_some_and(|accept| accept.split(',').any(|item| item.trim().starts_with("text/html")));
+            let app_page = matches!(first, "" | "albums" | "library" | "uploads" | "downloads" | "tasks" | "trash" | "settings" | "agent" | "login")
+                || matches!(path.as_str(), "/admin/setup" | "/admin/unavailable");
+            let reserved = matches!(first, "api" | "health" | "assets")
+                || path.rsplit('/').next().is_some_and(|last| last.contains('.'));
+            if !reserved && (app_page || accept_html) {
+                if let Ok(html) = tokio::fs::read(root.join("index.html")).await {
+                    let mut response = Response::new(if method == Method::HEAD { Body::empty() } else { Body::from(html) });
+                    *response.status_mut() = if app_page { StatusCode::OK } else { StatusCode::NOT_FOUND };
+                    response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
+                    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+                    response.headers_mut().insert("x-content-type-options", HeaderValue::from_static("nosniff"));
+                    response.headers_mut().insert("referrer-policy", HeaderValue::from_static("same-origin"));
+                    return response;
+                }
+                return (StatusCode::SERVICE_UNAVAILABLE, "frontend unavailable").into_response();
             }
         }
     }

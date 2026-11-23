@@ -212,12 +212,23 @@ impl MediaBackend for LocalFs {
         if !path.is_file() {
             return Ok(None);
         }
-        let bytes = std::fs::read(&path)?;
+        let (size, sha256) = hash_file(&path)?;
         Ok(Some(ObjectMeta {
-            size: bytes.len() as u64,
-            sha256: sha256_hex(&bytes),
+            size,
+            sha256,
             mime: "application/octet-stream".into(),
         }))
+    }
+
+    async fn stream(&self, key: &str) -> Result<super::ObjectStream> {
+        use futures_util::TryStreamExt;
+        let path = self.resolve(key)?;
+        let file = tokio::fs::File::open(path).await.map_err(|err| match err.kind() {
+            std::io::ErrorKind::NotFound => anyhow::anyhow!("storage missing"),
+            _ => anyhow::anyhow!("storage unavailable: {err}"),
+        })?;
+        anyhow::ensure!(file.metadata().await?.is_file(), "storage unavailable: not a file");
+        Ok(Box::pin(tokio_util::io::ReaderStream::new(file).map_err(anyhow::Error::from)))
     }
 
     fn local_file(&self, key: &str) -> Option<PathBuf> {

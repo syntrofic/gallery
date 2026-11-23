@@ -1,0 +1,10 @@
+services:
+  gallery:
+    environment:
+      GALLERY_BACKUP_REPLICA_DIR: /var/lib/gallery-replica
+    volumes:
+      - type: bind
+        source: "${GALLERY_BACKUP_REPLICA_MOUNT:?Mount the independent backup volume and set its path}"
+        target: /var/lib/gallery-replica
+        bind:
+          create_host_path: false

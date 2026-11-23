@@ -675,7 +675,7 @@ async fn claim(pool: &SqlitePool, worker: &str) -> Result<Option<Claimed>> {
            AND (
              NOT EXISTS (SELECT 1 FROM storage_route WHERE id = 1 AND write_barrier = 1)
              OR (
-               kind = 'backup'
+               kind IN ('backup', 'backup_replica')
                AND EXISTS (
                  SELECT 1 FROM storage_route
                  WHERE id = 1 AND write_barrier = 1 AND current_migration_id IS NULL
@@ -887,7 +887,7 @@ pub fn kind_deadline(kind: &str) -> Duration {
         "caption_image" => Duration::from_secs(2 * 60),
         "build_archive" | "storage_migrate_copy" | "storage_retire" => Duration::from_secs(30 * 60),
         "agent_run" => Duration::from_secs(10 * 60),
-        "backup" | "restore" => Duration::from_secs(6 * 60 * 60),
+        "backup" | "restore" | "restore_drill" | "backup_replica" => Duration::from_secs(6 * 60 * 60),
         _ => Duration::from_secs(5 * 60),
     }
 }
@@ -1129,6 +1129,8 @@ fn known_kind(kind: &str) -> bool {
             | "build_archive"
             | "purge_media"
             | "backup"
+            | "backup_replica"
+            | "restore_drill"
             | "restore"
             | "storage_migrate_copy"
             | "caption_image"

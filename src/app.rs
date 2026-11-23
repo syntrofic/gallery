@@ -82,11 +82,9 @@ pub async fn bootstrap(config: Config, inline_codec: bool) -> Result<AppState> {
     crate::migrate_storage::recover_opening(&state.pool).await?;
     crate::jobs::reclaim_expired(&state.pool).await?;
     crate::storage::reconcile::ensure_daily(&state.pool, &state.storage.backend_id).await?;
-    if state.config.daily_backup {
-        let _ = crate::backup::ensure_daily_backup(&state).await;
-    }
     crate::album::enqueue_expired_trash(&state.pool).await?;
     crate::jobs::spawn_workers(state.clone());
+    crate::backup_maintenance::spawn(state.clone());
     Ok(state)
 }
 

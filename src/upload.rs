@@ -376,21 +376,21 @@ pub async fn put_item(
             Err(err) => return Err(err.into()),
         };
         tx.commit().await.map_err(anyhow::Error::from)?;
-        match media.get_bytes(&key).await {
-            Ok(found) if sha256_hex(&found) == sha => {}
-            Ok(_) => {
-                return Err(AppError::conflict(
-                    "OBJECT_MISMATCH",
-                    "stored original does not match the upload",
-                ));
-            }
+        match media.hash_object(&key, bytes.len() as i64).await {
+            Ok((found, _)) if found == sha => {}
             Err(err) if crate::storage::is_missing(&err) => {
                 media
                     .put_bytes(&key, bytes, mime)
                     .await
                     .map_err(anyhow::Error::from)?;
             }
-            Err(_) => {
+            result => {
+                if result.is_ok() || result.is_err_and(|err| err.is::<crate::storage::ObjectMismatch>()) {
+                    return Err(AppError::conflict(
+                        "OBJECT_MISMATCH",
+                        "stored original does not match the upload",
+                    ));
+                }
                 return Err(AppError::new(
                     axum::http::StatusCode::SERVICE_UNAVAILABLE,
                     "STORAGE_UNAVAILABLE",
@@ -770,8 +770,8 @@ pub async fn get_batch(pool: &SqlitePool, actor: &Actor, batch_id: &str) -> AppR
     if batch.1 != actor.id && actor.role != "owner" {
         return Err(AppError::not_found());
     }
-    let items = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>)>(
-        "SELECT id, client_item_id, state, result_image_id, failure_code FROM upload_items WHERE batch_id = ?",
+    let items = sqlx::query_as::<_, (String, String, String, Option<String>, Option<String>, String, i64)>(
+        "SELECT id, client_item_id, state, result_image_id, failure_code, original_name, declared_size FROM upload_items WHERE batch_id = ?",
     )
     .bind(batch_id)
     .fetch_all(pool)
@@ -781,10 +781,12 @@ pub async fn get_batch(pool: &SqlitePool, actor: &Actor, batch_id: &str) -> AppR
         "id": batch_id,
         "album_id": batch.0,
         "state": batch.2,
-        "items": items.into_iter().map(|(id, client, state, image, fail)| serde_json::json!({
+        "items": items.into_iter().map(|(id, client, state, image, fail, name, size)| serde_json::json!({
             "id": id,
             "client_item_id": client,
             "state": state,
+            "name": name,
+            "size": size,
             "image_id": image,
             "failure_code": fail
         })).collect::<Vec<_>>()

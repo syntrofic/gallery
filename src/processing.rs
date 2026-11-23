@@ -1,5 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -148,16 +149,16 @@ fn tiff_page_stats(bytes: &[u8]) -> Result<(u32, u32, u32, u64)> {
     Ok((width, height, frames, pixels))
 }
 
-fn first_tiff_page(bytes: &[u8]) -> Result<image::DynamicImage> {
-    let decoder = image::codecs::tiff::TiffDecoder::new(std::io::Cursor::new(bytes))
+fn first_tiff_page(reader: impl BufRead + Seek) -> Result<image::DynamicImage> {
+    let decoder = image::codecs::tiff::TiffDecoder::new(reader)
         .map_err(|err| anyhow!("permanent:UNDECODABLE {err}"))?;
     image::DynamicImage::from_decoder(decoder)
         .map_err(|err| anyhow!("permanent:UNDECODABLE {err}"))
 }
 
-fn first_gif_frame(bytes: &[u8]) -> Result<image::DynamicImage> {
+fn first_gif_frame(reader: impl BufRead + Seek) -> Result<image::DynamicImage> {
     use image::AnimationDecoder;
-    let decoder = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes))
+    let decoder = image::codecs::gif::GifDecoder::new(reader)
         .map_err(|err| anyhow!("permanent:UNDECODABLE {err}"))?;
     let frame = decoder
         .into_frames()
@@ -168,30 +169,45 @@ fn first_gif_frame(bytes: &[u8]) -> Result<image::DynamicImage> {
 }
 
 pub fn jpeg_orientation(bytes: &[u8]) -> u8 {
-    if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
-        return 1;
+    read_jpeg_orientation(&mut std::io::Cursor::new(bytes)).unwrap_or(1)
+}
+
+fn read_jpeg_orientation(reader: &mut (impl Read + Seek)) -> std::io::Result<u8> {
+    let mut header = [0; 2];
+    reader.read_exact(&mut header)?;
+    if header != [0xff, 0xd8] {
+        return Ok(1);
     }
-    let mut index = 2;
-    while index + 4 < bytes.len() {
-        if bytes[index] != 0xFF {
-            break;
+    loop {
+        reader.read_exact(&mut header)?;
+        if header[0] != 0xff || matches!(header[1], 0xd9 | 0xda) {
+            return Ok(1);
         }
-        let marker = bytes[index + 1];
-        if marker == 0xD9 || marker == 0xDA {
-            break;
-        }
-        let len = u16::from_be_bytes([bytes[index + 2], bytes[index + 3]]) as usize;
-        if len < 2 || index + 2 + len > bytes.len() {
-            break;
-        }
-        if marker == 0xE1 {
-            if let Some(value) = exif_orientation(&bytes[index + 4..index + 2 + len]) {
-                return value;
+        let marker = header[1];
+        reader.read_exact(&mut header)?;
+        let Some(length) = u16::from_be_bytes(header).checked_sub(2) else {
+            return Ok(1);
+        };
+        if marker == 0xe1 {
+            let mut segment = vec![0; usize::from(length)];
+            reader.read_exact(&mut segment)?;
+            if let Some(orientation) = exif_orientation(&segment) {
+                return Ok(orientation);
             }
+        } else {
+            reader.seek(SeekFrom::Current(i64::from(length)))?;
         }
-        index += 2 + len;
     }
-    1
+}
+
+pub fn decode_file(path: &Path) -> Result<image::DynamicImage> {
+    let reader = image::ImageReader::new(BufReader::new(std::fs::File::open(path)?))
+        .with_guessed_format()?;
+    match reader.format() {
+        Some(image::ImageFormat::Gif) => first_gif_frame(reader.into_inner()),
+        Some(image::ImageFormat::Tiff) => first_tiff_page(reader.into_inner()),
+        _ => reader.decode().map_err(|err| anyhow!("permanent:UNDECODABLE {err}")),
+    }
 }
 
 fn exif_orientation(payload: &[u8]) -> Option<u8> {
@@ -262,15 +278,9 @@ impl DimExt for image::DynamicImage {
 pub fn run_plan(plan: &CodecPlan) -> Result<Vec<CodecOutput>> {
     let mut out = Vec::new();
     for op in &plan.ops {
-        let input_bytes = std::fs::read(&op.input_path)?;
-        let orientation = jpeg_orientation(&input_bytes);
-        let decoded = match crate::storage::detect_mime(&input_bytes) {
-            Some("image/gif") => first_gif_frame(&input_bytes)?,
-            Some("image/tiff") => first_tiff_page(&input_bytes)?,
-            _ => image::load_from_memory(&input_bytes)
-                .map_err(|err| anyhow!("permanent:UNDECODABLE {err}"))?,
-        };
-        let img = apply_orientation(decoded, orientation);
+        let orientation = read_jpeg_orientation(&mut BufReader::new(std::fs::File::open(&op.input_path)?))
+            .unwrap_or(1);
+        let img = apply_orientation(decode_file(&op.input_path)?, orientation);
         let format = match op.format.as_str() {
             "jpeg" | "jpg" => image::ImageFormat::Jpeg,
             "webp" => image::ImageFormat::WebP,
@@ -286,17 +296,17 @@ pub fn run_plan(plan: &CodecPlan) -> Result<Vec<CodecOutput>> {
             std::fs::create_dir_all(parent)?;
         };
         transformed.save_with_format(&op.output_path, format)?;
-        let bytes = std::fs::read(&op.output_path)?;
-        if bytes.is_empty() {
+        let (size, sha256) = crate::storage::local::hash_file(&op.output_path)?;
+        if size == 0 {
             bail!("empty codec output");
         }
-        let verify = image::load_from_memory(&bytes).map_err(|err| anyhow!("permanent:UNDECODABLE {err}"))?;
+        let verify = decode_file(&op.output_path)?;
         out.push(CodecOutput {
             spec_id: op.spec_id.clone(),
             width: verify.width(),
             height: verify.height(),
-            sha256: crate::ids::sha256_hex(&bytes),
-            size: bytes.len() as u64,
+            sha256,
+            size,
             mime: match format {
                 image::ImageFormat::Jpeg => "image/jpeg".into(),
                 image::ImageFormat::WebP => "image/webp".into(),

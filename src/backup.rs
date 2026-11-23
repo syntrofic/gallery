@@ -5,10 +5,11 @@ use serde_json::json;
 use sqlx::SqlitePool;
 use age::secrecy::ExposeSecret;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::app::AppState;
 use crate::auth::Actor;
+use crate::backup_package::{self as package, atomic_write, decrypt_file, encrypt_file};
 use crate::db;
 use crate::error::{AppError, AppResult};
 use crate::ids::{new_id, sha256_hex};
@@ -55,15 +56,6 @@ pub async fn preview_backup(
 
 pub async fn start_backup(state: &AppState, actor: &Actor) -> AppResult<serde_json::Value> {
     crate::auth::require_owner(actor)?;
-    if db::write_barrier(&state.pool)
-        .await
-        .map_err(anyhow::Error::from)?
-    {
-        return Err(AppError::conflict(
-            "MAINTENANCE",
-            "another maintenance operation holds the lock",
-        ));
-    }
     let (originals,): (i64,) = sqlx::query_as(
         "SELECT COALESCE(SUM(b.size), 0)
          FROM images i JOIN media_blobs b ON b.id = i.original_blob_id
@@ -81,31 +73,25 @@ pub async fn start_backup(state: &AppState, actor: &Actor) -> AppResult<serde_js
     }
     let id = new_id();
     let now = db::now_ms();
+    let mut tx = db::begin_immediate(&state.pool).await.map_err(anyhow::Error::from)?;
+    let (blocked,): (i64,) = sqlx::query_as(
+        "SELECT r.current_migration_id IS NOT NULL
+            OR (r.write_barrier = 1 AND NOT EXISTS (
+                SELECT 1 FROM schema_app WHERE key = 'source_readonly' AND value = '1'
+            ))
+            OR EXISTS (SELECT 1 FROM schema_app WHERE key = 'maintenance_reason' AND value <> '')
+            OR EXISTS (SELECT 1 FROM backup_runs WHERE state IN ('queued', 'running'))
+         FROM storage_route r WHERE id = 1",
+    ).fetch_one(&mut *tx).await.map_err(anyhow::Error::from)?;
+    if blocked != 0 {
+        return Err(AppError::conflict("MAINTENANCE", "another maintenance operation holds the lock"));
+    }
     sqlx::query(
-        "INSERT INTO backup_runs(id, state, created_at, updated_at) VALUES(?, 'queued', ?, ?)",
-    )
-    .bind(&id)
-    .bind(now)
-    .bind(now)
-    .execute(&state.pool)
-    .await
-    .map_err(anyhow::Error::from)?;
-    let branch = db::kv_get(&state.pool, "recovery_branch")
-        .await
-        .map_err(anyhow::Error::from)?
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "main".into());
-    let mut tx = crate::db::begin_immediate(&state.pool).await.map_err(anyhow::Error::from)?;
-    sqlx::query("UPDATE backup_runs SET branch_id = ? WHERE id = ?")
-        .bind(&branch)
-        .bind(&id)
-        .execute(&mut *tx)
-        .await
-        .map_err(anyhow::Error::from)?;
+        "INSERT INTO backup_runs(id, state, branch_id, created_at, updated_at)
+         VALUES(?, 'queued', COALESCE(NULLIF((SELECT value FROM schema_app WHERE key = 'recovery_branch'), ''), 'main'), ?, ?)",
+    ).bind(&id).bind(now).bind(now).execute(&mut *tx).await.map_err(anyhow::Error::from)?;
     sqlx::query("UPDATE storage_route SET write_barrier = 1 WHERE id = 1")
-        .execute(&mut *tx)
-        .await
-        .map_err(anyhow::Error::from)?;
+        .execute(&mut *tx).await.map_err(anyhow::Error::from)?;
     let payload = crate::jobs::JobPayload {
         kind: "backup".into(),
         payload_version: 1,
@@ -140,6 +126,16 @@ pub async fn start_backup(state: &AppState, actor: &Actor) -> AppResult<serde_js
 }
 
 pub async fn ensure_daily_backup(state: &AppState) -> Result<Option<String>> {
+    let day_start = chrono::Utc::now()
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| anyhow!("utc day"))?
+        .and_utc()
+        .timestamp_millis();
+    ensure_backup_since(state, day_start).await
+}
+
+pub(crate) async fn ensure_backup_since(state: &AppState, since: i64) -> Result<Option<String>> {
     let owner = sqlx::query_as::<_, (String, String, String, i64)>(
         "SELECT id, username, role, revision FROM actors WHERE role = 'owner' AND status = 'active' ORDER BY created_at LIMIT 1",
     )
@@ -155,18 +151,12 @@ pub async fn ensure_daily_backup(state: &AppState) -> Result<Option<String>> {
         must_change_password: false,
         revision: owner.3,
     };
-    let day_start = chrono::Utc::now()
-        .date_naive()
-        .and_hms_opt(0, 0, 0)
-        .ok_or_else(|| anyhow!("utc day"))?
-        .and_utc()
-        .timestamp_millis();
     if let Some((id,)) = sqlx::query_as::<_, (String,)>(
         "SELECT id FROM backup_runs
          WHERE state = 'succeeded' AND snapshot_at IS NOT NULL AND snapshot_at >= ?
          ORDER BY snapshot_at DESC LIMIT 1",
     )
-    .bind(day_start)
+    .bind(since)
     .fetch_optional(&state.pool)
     .await?
     {
@@ -183,8 +173,11 @@ pub async fn ensure_daily_backup(state: &AppState) -> Result<Option<String>> {
     if db::write_barrier(&state.pool).await? {
         return Ok(None);
     }
-    let started = start_backup(state, &actor).await.map_err(|err| anyhow!(err.to_string()))?;
-    Ok(started["id"].as_str().map(str::to_string))
+    match start_backup(state, &actor).await {
+        Ok(started) => Ok(started["id"].as_str().map(str::to_string)),
+        Err(AppError::Problem { code: "MAINTENANCE", .. }) => Ok(None),
+        Err(err) => Err(anyhow!(err.to_string())),
+    }
 }
 
 pub async fn write_snapshot(pool: &SqlitePool, dest: &std::path::Path) -> Result<()> {
@@ -230,87 +223,68 @@ pub async fn run_backup(state: &AppState, payload_json: &str) -> Result<()> {
         return Ok(());
     }
     let snapshot_at = db::now_ms();
-    let db_copy = dest.join("gallery.sqlite");
-    if db_copy.exists() {
-        std::fs::remove_file(&db_copy)?;
-    }
-    let escaped = db_copy.to_string_lossy().replace('\'', "''");
-    sqlx::query(&format!("VACUUM INTO '{escaped}'"))
-        .execute(&state.pool)
-        .await?;
-    let sqlite_plain = std::fs::read(&db_copy)?;
-    let sqlite_age = age_encrypt_bytes(&state.config.keys_root(), &sqlite_plain)?;
-    let sqlite_age_path = dest.join("gallery.sqlite.age");
-    std::fs::write(&sqlite_age_path, &sqlite_age)?;
-    let sqlite_read_back = std::fs::read(&sqlite_age_path)?;
-    if sha256_hex(&sqlite_read_back) != sha256_hex(&sqlite_age) {
-        anyhow::bail!("backup readback mismatch");
-    }
-    add_verify_stats(
-        &state.pool,
-        backup_id,
-        sqlite_age.len() as i64,
-        sqlite_read_back.len() as i64,
-        sqlite_plain.len() as i64,
-    )
-    .await?;
+    let scratch = tempfile::tempdir_in(state.config.work_root())?;
+    let db_copy = scratch.path().join("gallery.sqlite");
+    write_snapshot(&state.pool, &db_copy).await?;
     let originals = originals_in_snapshot(&db_copy).await?;
-    let catalog: (i64,) =
-        sqlx::query_as("SELECT catalog_revision FROM storage_route WHERE id = 1")
-            .fetch_one(&state.pool)
-            .await?;
-    let route_epoch: (i64,) = sqlx::query_as("SELECT routing_epoch FROM storage_route WHERE id = 1")
-        .fetch_one(&state.pool)
-        .await?;
-    let library = db::instance_id(&state.pool).await?;
-    let planned: Vec<_> = originals
-        .iter()
-        .map(|(_image_id, blob_id, size, sha)| {
-            json!({"blob_id": blob_id, "sha256": sha, "size": size, "object": sha256_hex(blob_id.as_bytes())})
-        })
-        .collect();
-    let manifest = json!({
-        "backup_id": backup_id,
-        "format_version": 1,
-        "snapshot_at": snapshot_at,
-        "catalog_revision": catalog.0,
-        "routing_epoch": route_epoch.0,
-        "instance_id": library,
-        "items": planned
+    let snapshot = db::connect(&db_copy).await?;
+    let (catalog, route_epoch, backend_kind): (i64, i64, String) = sqlx::query_as(
+        "SELECT r.catalog_revision, r.routing_epoch, b.kind FROM storage_route r
+         JOIN storage_backends b ON b.id = r.active_backend_id WHERE r.id = 1",
+    ).fetch_one(&snapshot).await?;
+    let library = db::instance_id(&snapshot).await?;
+    let schema = schema_version(&snapshot).await?;
+    let branch = db::kv_get(&snapshot, "recovery_branch").await?.unwrap_or_else(|| "main".into());
+    let parent = db::kv_get(&snapshot, "parent_backup_id").await?;
+    snapshot.close().await;
+
+    let keys = state.config.keys_root();
+    let (sqlite_size, sqlite_sha) = encrypt_file(&keys, &db_copy, &dest.join("gallery.sqlite.age"))?;
+    add_verify_stats(
+        &state.pool, backup_id, sqlite_size as i64, sqlite_size as i64,
+        std::fs::metadata(&db_copy)?.len() as i64,
+    ).await?;
+    let config = json!({
+        "instance_id": library, "branch_id": branch, "parent_backup_id": parent,
+        "schema_version": schema, "routing_epoch": route_epoch, "source_backend_kind": backend_kind,
+        "ai_enabled": state.config.ai_enabled,
     });
-    let manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
-    std::fs::write(dest.join("manifest.json"), &manifest_bytes)?;
-    let digest = sha256_hex(&manifest_bytes);
-    sqlx::query(
-        "UPDATE backup_runs SET snapshot_at = ?, catalog_revision = ?, routing_epoch = ?, instance_id = ?, manifest_digest = ?, updated_at = ?
-         WHERE id = ?",
+    let config_cipher = age_encrypt_bytes(&keys, &serde_json::to_vec(&config)?)?;
+    atomic_write(&dest.join(package::CONFIG), &config_cipher)?;
+    let planned: Vec<_> = originals.iter().map(|(_, blob_id, size, sha)| {
+        json!({"blob_id": blob_id, "sha256": sha, "size": size, "object": sha256_hex(blob_id.as_bytes())})
+    }).collect();
+    let plan = json!({
+        "backup_id": backup_id, "format_version": package::FORMAT, "snapshot_at": snapshot_at,
+        "catalog_revision": catalog, "routing_epoch": route_epoch, "instance_id": library,
+        "branch_id": branch, "parent_backup_id": parent, "schema_version": schema,
+        "source_backend_kind": backend_kind, "sqlite_sha256": sqlite_sha,
+        "config_sha256": sha256_hex(&config_cipher), "items": planned,
+    });
+    let ciphertext = seal_plan(&keys, &serde_json::to_vec(&plan)?)?;
+    atomic_write(&dest.join(package::SEAL), &ciphertext)?;
+    let digest = sha256_hex(&ciphertext);
+    let mut tx = db::begin_immediate(&state.pool).await?;
+    let updated = sqlx::query(
+        "UPDATE backup_runs SET snapshot_at = ?, catalog_revision = ?, routing_epoch = ?, instance_id = ?,
+            manifest_digest = ?, format_version = ?, schema_version = ?, updated_at = ?
+         WHERE id = ? AND state IN ('queued', 'running')",
     )
-    .bind(snapshot_at)
-    .bind(catalog.0)
-    .bind(route_epoch.0)
-    .bind(&library)
-    .bind(&digest)
-    .bind(db::now_ms())
-    .bind(backup_id)
-    .execute(&state.pool)
-    .await?;
+    .bind(snapshot_at).bind(catalog).bind(route_epoch).bind(&library).bind(&digest)
+    .bind(package::FORMAT).bind(schema).bind(db::now_ms()).bind(backup_id)
+    .execute(&mut *tx).await?;
+    anyhow::ensure!(updated.rows_affected() == 1, "backup is no longer running");
+    for (_, blob_id, _, _) in &originals {
+        sqlx::query("INSERT OR IGNORE INTO backup_pins(backup_id, blob_id) VALUES(?, ?)")
+            .bind(backup_id).bind(blob_id).execute(&mut *tx).await?;
+    }
     sqlx::query(
         "UPDATE storage_route SET write_barrier = 0 WHERE id = 1
          AND NOT EXISTS (SELECT 1 FROM schema_app WHERE key = 'source_readonly' AND value = '1')",
-    )
-    .execute(&state.pool)
-    .await?;
-    let mut items = Vec::new();
-    for (_image_id, blob_id, size, sha) in &originals {
-        copy_backup_object(state, backup_id, &dest, blob_id, *size, sha).await?;
-        items.push(json!({"blob_id": blob_id, "sha256": sha, "size": size}));
-    }
-    let _ = items;
-    let signed = sign_complete(&state.config.keys_root(), backup_id, &digest)?;
-    std::fs::write(dest.join("COMPLETE"), signed)?;
-    commit_sealed_success(&state.pool, backup_id).await?;
-    let _ = prune_retention(&state.pool, &state.config.backup_root(), db::now_ms()).await;
-    Ok(())
+    ).execute(&mut *tx).await?;
+    tx.commit().await?;
+    drop(scratch);
+    finish_copy(state, backup_id, &dest, &digest, plan, package::FORMAT).await
 }
 
 pub async fn abandon_unsealed(pool: &SqlitePool, backup_id: &str) -> AppResult<()> {
@@ -373,19 +347,21 @@ pub async fn resume_backup(state: &AppState, actor: &Actor, id: &str) -> AppResu
             "the snapshot was not sealed; start a new backup",
         ));
     }
-    if row.0 == "succeeded" {
+    if row.0 == "succeeded" || row.0 == "abandoned" {
         return Err(AppError::conflict("BACKUP_SEALED", "the backup already completed"));
     }
     let now = db::now_ms();
+    let mut tx = db::begin_immediate(&state.pool).await.map_err(anyhow::Error::from)?;
     if let Some(job_id) = row.2.as_deref() {
         sqlx::query(
-            "UPDATE jobs SET state = 'queued', available_at = ?, lease_token = NULL, lease_until = NULL, updated_at = ?
+            "UPDATE jobs SET state = 'queued', available_at = ?, lease_token = NULL, lease_until = NULL, updated_at = ?,
+                max_attempts = attempt_no + 3, run_generation = run_generation + 1, failure_code = NULL
              WHERE id = ? AND state IN ('failed', 'canceled', 'retry_wait')",
         )
         .bind(now)
         .bind(now)
         .bind(job_id)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await
         .map_err(anyhow::Error::from)?;
     }
@@ -395,9 +371,11 @@ pub async fn resume_backup(state: &AppState, actor: &Actor, id: &str) -> AppResu
     )
     .bind(now)
     .bind(id)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await
     .map_err(anyhow::Error::from)?;
+    tx.commit().await.map_err(anyhow::Error::from)?;
+    state.wake_jobs();
     Ok(json!({
         "id": id,
         "state": "queued",
@@ -515,20 +493,20 @@ async fn try_finish_signed(
     dest: &std::path::Path,
     keys_root: &PathBuf,
 ) -> Result<bool> {
-    let Ok(manifest) = std::fs::read(dest.join("manifest.json")) else {
+    let (path, version) = package::manifest_path(dest);
+    let Ok((_, sha)) = crate::storage::local::hash_file(&path) else { return Ok(false); };
+    let Ok(complete) = std::fs::read_to_string(dest.join("COMPLETE")) else { return Ok(false); };
+    let Ok(signed_seal) = verify_complete_version(keys_root, backup_id, &sha, &complete, version) else {
         return Ok(false);
     };
-    if sha256_hex(&manifest) != digest {
-        return Ok(false);
-    }
-    let Ok(complete) = std::fs::read_to_string(dest.join("COMPLETE")) else {
-        return Ok(false);
-    };
-    if verify_complete(keys_root, backup_id, digest, &complete).is_err() {
+    if signed_seal.unwrap_or(&sha) != digest {
         return Ok(false);
     }
     match commit_sealed_success(pool, backup_id).await {
-        Ok(()) => Ok(true),
+        Ok(()) => {
+            let _ = std::fs::remove_file(dest.join(package::SEAL));
+            Ok(true)
+        }
         Err(err) if err.to_string().contains("no longer running") => Ok(false),
         Err(err) => Err(err),
     }
@@ -539,14 +517,13 @@ pub fn signed_complete(keys: &PathBuf, backup_id: &str, digest: &str) -> Result<
 }
 
 async fn resume_sealed_copy(state: &AppState, backup_id: &str, dest: &std::path::Path) -> Result<bool> {
-    let digest: Option<String> = sqlx::query_as(
-        "SELECT manifest_digest FROM backup_runs WHERE id = ? AND state IN ('queued', 'running')",
+    let row: Option<(Option<String>, i64)> = sqlx::query_as(
+        "SELECT manifest_digest, format_version FROM backup_runs WHERE id = ? AND state IN ('queued', 'running')",
     )
     .bind(backup_id)
     .fetch_optional(&state.pool)
-    .await?
-    .and_then(|row: (Option<String>,)| row.0);
-    let Some(digest) = digest else {
+    .await?;
+    let Some((Some(digest), format)) = row else {
         return Ok(false);
     };
     if try_finish_signed(
@@ -560,21 +537,54 @@ async fn resume_sealed_copy(state: &AppState, backup_id: &str, dest: &std::path:
     {
         return Ok(true);
     }
-    let manifest_bytes = std::fs::read(dest.join("manifest.json"))?;
-    if sha256_hex(&manifest_bytes) != digest {
-        anyhow::bail!("sealed manifest mismatch");
-    }
-    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
-    for item in manifest["items"].as_array().unwrap_or(&Vec::new()) {
+    let encrypted = format == package::FORMAT;
+    let bytes = std::fs::read(dest.join(if encrypted { package::SEAL } else { "manifest.json" }))?;
+    anyhow::ensure!(sha256_hex(&bytes) == digest, "sealed manifest mismatch");
+    let bytes = if encrypted { open_plan(&state.config.keys_root(), &bytes)? } else { bytes };
+    let manifest = serde_json::from_slice(&bytes)?;
+    finish_copy(state, backup_id, dest, &digest, manifest, format).await?;
+    Ok(true)
+}
+
+async fn finish_copy(
+    state: &AppState, backup_id: &str, dest: &Path, seal_digest: &str,
+    mut manifest: serde_json::Value, format: i64,
+) -> Result<()> {
+    for item in manifest["items"].as_array_mut().ok_or_else(|| anyhow!("manifest items"))? {
         let blob_id = item["blob_id"].as_str().ok_or_else(|| anyhow!("manifest blob"))?;
         let sha = item["sha256"].as_str().ok_or_else(|| anyhow!("manifest sha"))?;
         let size = item["size"].as_i64().ok_or_else(|| anyhow!("manifest size"))?;
         copy_backup_object(state, backup_id, dest, blob_id, size, sha).await?;
+        if format == package::FORMAT {
+            let (ciphertext_sha,): (String,) = sqlx::query_as(
+                "SELECT ciphertext_sha256 FROM backup_items WHERE backup_id = ? AND blob_id = ? AND state = 'verified'",
+            ).bind(backup_id).bind(blob_id).fetch_one(&state.pool).await?;
+            item["ciphertext_sha256"] = json!(ciphertext_sha);
+        }
     }
-    let signed = sign_complete(&state.config.keys_root(), backup_id, &digest)?;
-    std::fs::write(dest.join("COMPLETE"), signed)?;
+    let keys = state.config.keys_root();
+    let digest = if format == package::FORMAT {
+        manifest["seal_sha256"] = json!(seal_digest);
+        anyhow::ensure!(
+            crate::storage::local::hash_file(&dest.join(package::CONFIG))?.1 == manifest["config_sha256"],
+            "backup config ciphertext mismatch",
+        );
+        anyhow::ensure!(
+            crate::storage::local::hash_file(&dest.join("gallery.sqlite.age"))?.1 == manifest["sqlite_sha256"],
+            "backup sqlite ciphertext mismatch",
+        );
+        let bytes = age_encrypt_bytes(&keys, &serde_json::to_vec(&manifest)?)?;
+        atomic_write(&dest.join(package::MANIFEST), &bytes)?;
+        sha256_hex(&bytes)
+    } else {
+        seal_digest.to_string()
+    };
+    let signed = sign_complete_version(&keys, backup_id, &digest, (format == package::FORMAT).then_some(seal_digest))?;
+    atomic_write(&dest.join("COMPLETE"), signed.as_bytes())?;
     commit_sealed_success(&state.pool, backup_id).await?;
-    Ok(true)
+    let _ = std::fs::remove_file(dest.join(package::SEAL));
+    let _ = prune_retention(&state.pool, &state.config.backup_root(), db::now_ms()).await;
+    Ok(())
 }
 
 pub async fn copy_backup_object(
@@ -598,9 +608,9 @@ pub async fn copy_backup_object(
     if let Some((item_state, stored_sha, ciphertext_sha, _)) = &existing {
         if item_state == "verified" && stored_sha == sha && stable_path.is_file() {
             if let Some(ciphertext_sha) = ciphertext_sha {
-                let bytes = std::fs::read(&stable_path)?;
-                if sha256_hex(&bytes) == *ciphertext_sha {
-                    add_verify_stats(&state.pool, backup_id, 0, bytes.len() as i64, size).await?;
+                let (bytes, digest) = crate::storage::local::hash_file(&stable_path)?;
+                if digest == *ciphertext_sha {
+                    add_verify_stats(&state.pool, backup_id, 0, bytes as i64, size).await?;
                     return Ok("reused");
                 }
             }
@@ -618,12 +628,14 @@ pub async fn copy_backup_object(
         .await?;
     let media = state.media().await?;
     let (key, _, _, _) = crate::storage::location_for(&state.pool, blob_id, &media.backend_id).await?;
-    let bytes = media.get_bytes(&key).await?;
-    if crate::storage::sha_of(&bytes) != sha {
-        anyhow::bail!("backup hash mismatch for {blob_id}");
-    }
-    let ciphertext = age_encrypt_bytes(&state.config.keys_root(), &bytes)?;
-    let ciphertext_sha = sha256_hex(&ciphertext);
+    let original = tempfile::NamedTempFile::new_in(state.config.work_root())?;
+    media.copy_verified(&key, size, sha, original.path()).await?;
+    let attempt_dir = dest.join("attempts");
+    std::fs::create_dir_all(&attempt_dir)?;
+    let attempt = tempfile::NamedTempFile::new_in(&attempt_dir)?;
+    let attempt_path = attempt.path();
+    let keys = state.config.keys_root();
+    let (ciphertext_size, ciphertext_sha) = encrypt_file(&keys, original.path(), attempt_path)?;
     sqlx::query(
         "INSERT INTO backup_items(backup_id, blob_id, ciphertext_key, plaintext_sha256, ciphertext_sha256, size, state)
          VALUES(?, ?, ?, ?, ?, ?, 'uploading')
@@ -642,22 +654,10 @@ pub async fn copy_backup_object(
     .bind(size)
     .execute(&state.pool)
     .await?;
-    if let Some(parent) = stable_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    if attempt_key == stable_key {
-        std::fs::write(&stable_path, &ciphertext)?;
-    } else {
-        let attempt_dir = dest.join("attempts");
-        std::fs::create_dir_all(&attempt_dir)?;
-        let attempt_path = attempt_dir.join(&attempt_key);
-        std::fs::write(&attempt_path, &ciphertext)?;
-        std::fs::rename(&attempt_path, &stable_path)?;
-    }
-    let read_back = std::fs::read(&stable_path)?;
-    if sha256_hex(&read_back) != ciphertext_sha {
-        anyhow::bail!("backup readback mismatch");
-    }
+    std::fs::rename(attempt_path, &stable_path)?;
+    std::fs::File::open(dest)?.sync_all()?;
+    let (read_back, digest) = crate::storage::local::hash_file(&stable_path)?;
+    anyhow::ensure!(digest == ciphertext_sha, "backup readback mismatch");
     sqlx::query(
         "UPDATE backup_items SET state = 'verified' WHERE backup_id = ? AND blob_id = ?",
     )
@@ -668,8 +668,8 @@ pub async fn copy_backup_object(
     add_verify_stats(
         &state.pool,
         backup_id,
-        ciphertext.len() as i64,
-        read_back.len() as i64,
+        ciphertext_size as i64,
+        read_back as i64,
         size,
     )
     .await?;
@@ -702,21 +702,19 @@ async fn add_verify_stats(
 }
 
 pub async fn commit_sealed_success(pool: &SqlitePool, backup_id: &str) -> Result<()> {
+    let mut tx = db::begin_immediate(pool).await?;
     let updated = sqlx::query(
         "UPDATE backup_runs SET state = 'succeeded', updated_at = ?
          WHERE id = ? AND manifest_digest IS NOT NULL AND state IN ('queued', 'running')",
     )
     .bind(db::now_ms())
     .bind(backup_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
-    if updated.rows_affected() != 1 {
-        anyhow::bail!("backup is no longer running");
-    }
+    anyhow::ensure!(updated.rows_affected() == 1, "backup is no longer running");
     sqlx::query("DELETE FROM backup_pins WHERE backup_id = ?")
-        .bind(backup_id)
-        .execute(pool)
-        .await?;
+        .bind(backup_id).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -737,7 +735,7 @@ pub async fn abandon_incomplete_copy(pool: &SqlitePool, backup_id: &str, root: &
     }
     let updated = sqlx::query(
         "UPDATE backup_runs SET state = 'abandoned', updated_at = ?
-         WHERE id = ? AND state IN ('queued', 'running')",
+         WHERE id = ? AND state IN ('queued', 'running', 'failed')",
     )
     .bind(db::now_ms())
     .bind(backup_id)
@@ -1193,18 +1191,29 @@ async fn restore_verified(
     parent_backup_id: Option<&str>,
     branch_id: Option<&str>,
 ) -> Result<()> {
-    let started = std::time::Instant::now();
-    let src = state.config.backup_root().join(backup_id);
-    let complete = std::fs::read_to_string(src.join("COMPLETE"))?;
-    let manifest_bytes = std::fs::read(src.join("manifest.json"))?;
-    let digest = sha256_hex(&manifest_bytes);
-    verify_complete(&state.config.keys_root(), backup_id, &digest, &complete)?;
-    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes)?;
     let isolated = state.config.work_root().join("restore").join(restore_id);
+    restore_into(&state.config.keys_root(), backup_id, Some((&state.pool, restore_id)), parent_backup_id, branch_id, &isolated, &state.config.backup_root()).await
+}
+
+pub(crate) async fn restore_into(
+    keys: &Path,
+    backup_id: &str,
+    checkpoint: Option<(&SqlitePool, &str)>,
+    parent_backup_id: Option<&str>,
+    branch_id: Option<&str>,
+    isolated: &Path,
+    repository: &Path,
+) -> Result<()> {
+    let started = std::time::Instant::now();
+    let src = repository.join(backup_id);
+    let (_, manifest) = package::read_committed(keys, &src, backup_id)?;
+    let config = package::check_config(keys, &src, &manifest)?;
     std::fs::create_dir_all(isolated.join("media"))?;
-    let sqlite_ct = std::fs::read(src.join("gallery.sqlite.age"))?;
-    let sqlite_plain = age_decrypt_bytes(&state.config.keys_root(), &sqlite_ct)?;
-    std::fs::write(isolated.join("gallery.sqlite"), &sqlite_plain)?;
+    decrypt_file(keys, &src.join("gallery.sqlite.age"), &isolated.join("gallery.sqlite"),
+        manifest["sqlite_sha256"].as_str(), None)?;
+    if let Some(config) = config {
+        atomic_write(&isolated.join("config.json"), &config)?;
+    }
     let check = crate::db::connect(&isolated.join("gallery.sqlite")).await?;
     let (integrity,): (String,) = sqlx::query_as("PRAGMA integrity_check").fetch_one(&check).await?;
     if integrity != "ok" {
@@ -1214,54 +1223,44 @@ async fn restore_verified(
     if !violations.is_empty() {
         anyhow::bail!("sqlite foreign_key_check failed");
     }
-    for item in manifest["items"].as_array().unwrap_or(&Vec::new()) {
-        if restore_canceled(&state.pool, restore_id).await? {
-            return Ok(());
+    if manifest["instance_id"].is_string() {
+        anyhow::ensure!(db::instance_id(&check).await? == manifest["instance_id"], "backup SQLite identity mismatch");
+    }
+    for item in package::items(&manifest)? {
+        if let Some((pool, id)) = checkpoint {
+            if restore_canceled(pool, id).await? {
+                return Ok(());
+            }
         }
-        let object = item["object"].as_str().ok_or_else(|| anyhow!("manifest object"))?;
+        let object = package::object_name(item)?;
         let sha = item["sha256"].as_str().ok_or_else(|| anyhow!("manifest sha"))?;
         let size = item["size"].as_i64().ok_or_else(|| anyhow!("manifest size"))?;
         let blob_id = item["blob_id"].as_str().unwrap_or(object);
-        let already: Option<(String,)> = sqlx::query_as(
-            "SELECT state FROM restore_items WHERE restore_id = ? AND blob_id = ?",
-        )
-        .bind(restore_id)
-        .bind(blob_id)
-        .fetch_optional(&state.pool)
-        .await?;
         let restored_path = isolated.join("media").join(object);
-        if already.as_ref().map(|row| row.0.as_str()) == Some("verified") {
-            if let Ok(existing) = std::fs::read(&restored_path) {
-                if existing.len() as i64 == size && sha256_hex(&existing) == sha {
-                    continue;
-                }
+        if let Some((pool, id)) = checkpoint {
+            let checked: Option<(String,)> = sqlx::query_as(
+                "SELECT state FROM restore_items WHERE restore_id = ? AND blob_id = ?",
+            ).bind(id).bind(blob_id).fetch_optional(pool).await?;
+            if checked.is_some_and(|(value,)| value == "verified")
+                && crate::storage::local::hash_file(&restored_path)
+                    .is_ok_and(|(found_size, found_sha)| found_size as i64 == size && found_sha == sha)
+            {
+                continue;
             }
         }
-        let ciphertext = std::fs::read(src.join(object))?;
-        let bytes = age_decrypt_bytes(&state.config.keys_root(), &ciphertext)?;
-        if bytes.len() as i64 != size || sha256_hex(&bytes) != sha {
+        let result = decrypt_file(keys, &src.join(object), &restored_path,
+            item["ciphertext_sha256"].as_str(), Some((size, sha)));
+        if let Some((pool, id)) = checkpoint {
             sqlx::query(
-                "INSERT INTO restore_items(restore_id, blob_id, state) VALUES(?, ?, 'missing')
-                 ON CONFLICT(restore_id, blob_id) DO UPDATE SET state = 'missing'",
-            )
-            .bind(restore_id)
-            .bind(blob_id)
-            .execute(&state.pool)
-            .await?;
-            anyhow::bail!("backup object hash mismatch");
+                "INSERT INTO restore_items(restore_id, blob_id, state) VALUES(?, ?, ?)
+                 ON CONFLICT(restore_id, blob_id) DO UPDATE SET state = excluded.state",
+            ).bind(id).bind(blob_id).bind(if result.is_ok() { "verified" } else { "missing" })
+                .execute(pool).await?;
         }
-        std::fs::write(&restored_path, &bytes)?;
-        sqlx::query(
-            "INSERT INTO restore_items(restore_id, blob_id, state) VALUES(?, ?, 'verified')
-             ON CONFLICT(restore_id, blob_id) DO UPDATE SET state = 'verified'",
-        )
-        .bind(restore_id)
-        .bind(blob_id)
-        .execute(&state.pool)
-        .await?;
+        result?;
     }
     let rebound = rebind_restored_media(&check, &isolated.join("media")).await?;
-    let mut report = rebuild_restored_runtime(&check, restore_id, backup_id).await?;
+    let mut report = rebuild_restored_runtime(&check, checkpoint.map_or("isolated", |(_, id)| id), backup_id).await?;
     if let (Some(parent), Some(branch)) = (parent_backup_id, branch_id) {
         let mut tx = db::begin_immediate(&check).await?;
         db::kv_set(&mut tx, "parent_backup_id", parent).await?;
@@ -1302,10 +1301,8 @@ async fn restore_verified(
             .execute(&check)
             .await?;
     }
-    std::fs::write(
-        isolated.join("report.json"),
-        serde_json::to_vec_pretty(&report)?,
-    )?;
+    check.close().await;
+    atomic_write(&isolated.join("report.json"), &serde_json::to_vec_pretty(&report)?)?;
     Ok(())
 }
 
@@ -1340,11 +1337,9 @@ async fn smoke_restored_target(pool: &SqlitePool) -> Result<serde_json::Value> {
     let storage = crate::storage::open_by_id(pool, "restore-target").await?;
     let mut checked = 0i64;
     for (blob_id, sha, size) in rows {
-        let bytes = storage
-            .get_bytes(&sha256_hex(blob_id.as_bytes()))
-            .await
-            .map_err(|_| anyhow!("smoke read"))?;
-        if bytes.len() as i64 != size || sha256_hex(&bytes) != sha {
+        let (digest, _) = storage.hash_object(&sha256_hex(blob_id.as_bytes()), size)
+            .await.map_err(|_| anyhow!("smoke read"))?;
+        if digest != sha {
             anyhow::bail!("smoke hash");
         }
         checked += 1;
@@ -1433,13 +1428,12 @@ pub async fn rebind_restored_media(
     let mut rebuilt = 0i64;
     for (blob_id, sha, size) in rows {
         let key = sha256_hex(blob_id.as_bytes());
-        let bytes = match std::fs::read(media_dir.join(&key)) {
-            Ok(bytes) => bytes,
-            Err(_) => continue,
+        let hash = match crate::storage::local::hash_file(&media_dir.join(&key)) {
+            Ok(hash) => hash,
+            Err(err) if err.downcast_ref::<std::io::Error>().is_some_and(|err| err.kind() == std::io::ErrorKind::NotFound) => continue,
+            Err(err) => return Err(err),
         };
-        if bytes.len() as i64 != size || sha256_hex(&bytes) != sha {
-            anyhow::bail!("restored original hash mismatch");
-        }
+        anyhow::ensure!(hash == (size as u64, sha.clone()), "restored original hash mismatch");
         sqlx::query(
             "INSERT INTO media_locations(
                 blob_id, backend_id, object_key, backend_revision, size, sha256, state, verified_at
@@ -1490,14 +1484,14 @@ pub async fn audit_restored_originals(
     let mut verified = 0i64;
     for (blob_id, sha, size) in &rows {
         let path = media_dir.join(sha256_hex(blob_id.as_bytes()));
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
+        let (actual_size, actual_sha) = match crate::storage::local::hash_file(&path) {
+            Ok(result) => result,
             Err(_) => {
                 missing.push(blob_id.clone());
                 continue;
             }
         };
-        if bytes.len() as i64 != *size || sha256_hex(&bytes) != *sha {
+        if actual_size as i64 != *size || actual_sha != *sha {
             mismatched.push(blob_id.clone());
         } else {
             verified += 1;
@@ -1623,20 +1617,34 @@ pub async fn readonly_entry(pool: &SqlitePool) -> AppResult<serde_json::Value> {
         .await
         .map_err(anyhow::Error::from)?
         .and_then(|value| value.parse::<i64>().ok());
+    let accepted = db::kv_get(pool, "restore_accepted_at").await.map_err(anyhow::Error::from)?
+        .and_then(|value| value.parse::<i64>().ok());
+    let open = !frozen && !db::write_barrier(pool).await.map_err(anyhow::Error::from)?;
     Ok(json!({
+        "instance_id": db::instance_id(pool).await.map_err(anyhow::Error::from)?,
+        "accepted_at": accepted,
         "mode": if frozen { "readonly" } else { "open" },
         "reads": "open",
-        "writes": if frozen { "blocked" } else { "open" },
+        "writes": if open { "open" } else { "blocked" },
         "frozen_at": frozen_at
     }))
 }
 
 pub async fn freeze_source(pool: &SqlitePool, actor: &Actor) -> AppResult<serde_json::Value> {
     crate::auth::require_owner(actor)?;
-    let now = db::now_ms();
     let instance = db::instance_id(pool).await.map_err(anyhow::Error::from)?;
-    let ack = sha256_hex(format!("{instance}:{now}").as_bytes());
     let mut tx = db::begin_immediate(pool).await.map_err(anyhow::Error::from)?;
+    let previous: Option<(i64, String)> = sqlx::query_as(
+        "SELECT CAST(frozen.value AS INTEGER), ack.value FROM schema_app source
+         JOIN schema_app frozen ON frozen.key = 'source_frozen_at'
+         JOIN schema_app ack ON ack.key = 'source_readonly_ack'
+         WHERE source.key = 'source_readonly' AND source.value = '1'",
+    ).fetch_optional(&mut *tx).await.map_err(anyhow::Error::from)?;
+    if let Some((frozen_at, ack)) = previous {
+        return Ok(json!({"writes":"readonly","frozen_at":frozen_at,"ack":ack}));
+    }
+    let now = db::now_ms();
+    let ack = sha256_hex(format!("{instance}:{now}").as_bytes());
     db::kv_set(&mut tx, "source_readonly", "1")
         .await
         .map_err(anyhow::Error::from)?;
@@ -1739,25 +1747,29 @@ pub async fn finish_handoff(
 }
 
 pub async fn drill_smoke(state: &AppState, actor: &Actor) -> AppResult<serde_json::Value> {
+    drill_smoke_on(&state.pool, actor).await
+}
+
+pub(crate) async fn drill_smoke_on(pool: &SqlitePool, actor: &Actor) -> AppResult<serde_json::Value> {
     crate::auth::require_owner(actor)?;
-    if !db::write_barrier(&state.pool).await.map_err(anyhow::Error::from)? {
+    if !db::write_barrier(pool).await.map_err(anyhow::Error::from)? {
         return Err(AppError::conflict(
             "DRILL_REQUIRED",
             "smoke runs while writes stay isolated",
         ));
     }
     let (images_before,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM images")
-        .fetch_one(&state.pool)
+        .fetch_one(pool)
         .await
         .map_err(anyhow::Error::from)?;
     let (albums_before,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM albums")
-        .fetch_one(&state.pool)
+        .fetch_one(pool)
         .await
         .map_err(anyhow::Error::from)?;
-    let (token, session) = crate::auth::issue_session(&state.pool, actor, 60_000)
+    let (token, session) = crate::auth::issue_session(pool, actor, 60_000)
         .await
         .map_err(anyhow::Error::from)?;
-    let login_ok = crate::auth::lookup_session(&state.pool, &token)
+    let login_ok = crate::auth::lookup_session(pool, &token)
         .await
         .map_err(anyhow::Error::from)?
         .is_some();
@@ -1765,22 +1777,22 @@ pub async fn drill_smoke(state: &AppState, actor: &Actor) -> AppResult<serde_jso
     let smoke_id = new_id();
     let key = format!("work/drill/{smoke_id}.bin");
     let thumb_key = format!("work/drill/{smoke_id}-thumb.png");
-    let media = state.media().await.map_err(anyhow::Error::from)?;
-    let drilled = run_drill_sample(state, actor, &media, &key, &thumb_key, &sample).await;
+    let media = crate::storage::open_routed(pool).await.map_err(anyhow::Error::from)?;
+    let drilled = run_drill_sample(pool, actor, &media, &key, &thumb_key, &sample).await;
     let _ = media.delete_key(&key).await;
     let _ = media.delete_key(&thumb_key).await;
     sqlx::query("UPDATE sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL")
         .bind(db::now_ms())
         .bind(&session.id)
-        .execute(&state.pool)
+        .execute(pool)
         .await
         .map_err(anyhow::Error::from)?;
     let (images_after,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM images")
-        .fetch_one(&state.pool)
+        .fetch_one(pool)
         .await
         .map_err(anyhow::Error::from)?;
     let (albums_after,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM albums")
-        .fetch_one(&state.pool)
+        .fetch_one(pool)
         .await
         .map_err(anyhow::Error::from)?;
     if images_after != images_before || albums_after != albums_before {
@@ -1789,7 +1801,7 @@ pub async fn drill_smoke(state: &AppState, actor: &Actor) -> AppResult<serde_jso
             "the drill sample is still in the library",
         ));
     }
-    if !db::write_barrier(&state.pool).await.map_err(anyhow::Error::from)? {
+    if !db::write_barrier(pool).await.map_err(anyhow::Error::from)? {
         return Err(AppError::conflict(
             "DRILL_REQUIRED",
             "smoke runs while writes stay isolated",
@@ -1806,7 +1818,7 @@ pub async fn drill_smoke(state: &AppState, actor: &Actor) -> AppResult<serde_jso
 }
 
 async fn run_drill_sample(
-    state: &AppState,
+    pool: &SqlitePool,
     actor: &Actor,
     media: &crate::storage::Storage,
     key: &str,
@@ -1842,7 +1854,7 @@ async fn run_drill_sample(
     if !archived.starts_with(b"PK") {
         return Err(AppError::conflict("DRILL_ARCHIVE", "desktop archive is not a zip"));
     }
-    let mut tx = db::begin_immediate(&state.pool).await.map_err(anyhow::Error::from)?;
+    let mut tx = db::begin_immediate(pool).await.map_err(anyhow::Error::from)?;
     let job_id = new_id();
     let now = db::now_ms();
     sqlx::query(
@@ -1953,16 +1965,21 @@ pub async fn rebuild_restored_runtime(
     crate::versions::ensure_default_profile(pool).await?;
     let now = db::now_ms();
     let mut tx = db::begin_immediate(pool).await?;
+    sqlx::query(
+        "INSERT INTO schema_app(key,value)
+         SELECT 'restored_from_freeze_ack', value FROM schema_app WHERE key = 'source_readonly_ack'
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).execute(&mut *tx).await?;
+    sqlx::query(
+        "DELETE FROM schema_app WHERE key IN ('source_readonly', 'source_frozen_at', 'source_readonly_ack',
+            'restore_accepted_at', 'promote_source_ack', 'handoff_source_ack', 'handoff_backup_id',
+            'handoff_completed_at', 'maintenance_image', 'maintenance_reason', 'workers_draining')",
+    ).execute(&mut *tx).await?;
     let revoked = sqlx::query("UPDATE sessions SET revoked_at = ? WHERE revoked_at IS NULL")
         .bind(now)
         .execute(&mut *tx)
         .await?
         .rows_affected();
-    sqlx::query(
-        "UPDATE storage_route SET routing_epoch = routing_epoch + 1, write_barrier = 1 WHERE id = 1",
-    )
-    .execute(&mut *tx)
-    .await?;
     let policy: Option<(String,)> =
         sqlx::query_as("SELECT value FROM schema_app WHERE key = 'policy_epoch'")
             .fetch_optional(&mut *tx)
@@ -1980,7 +1997,7 @@ pub async fn rebuild_restored_runtime(
     .await?;
     sqlx::query(
         "UPDATE jobs SET state = 'failed', failure_code = 'NEEDS_REVIEW', lease_token = NULL, lease_until = NULL, updated_at = ?
-         WHERE kind IN ('backup', 'restore', 'storage_migrate_copy', 'storage_retire', 'purge_media', 'agent_run')
+         WHERE kind IN ('backup', 'backup_replica', 'restore', 'restore_drill', 'storage_migrate_copy', 'storage_retire', 'purge_media', 'agent_run')
            AND state IN ('queued', 'running', 'retry_wait')",
     )
     .bind(now)
@@ -2059,6 +2076,11 @@ pub async fn rebuild_restored_runtime(
     sqlx::query(
         "UPDATE agent_actions SET state = 'needs_reconcile'
          WHERE state IN ('proposed', 'approved', 'dispatching')",
+    )
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "UPDATE storage_route SET routing_epoch = routing_epoch + 1, write_barrier = 1 WHERE id = 1",
     )
     .execute(&mut *tx)
     .await?;
@@ -2479,12 +2501,10 @@ fn backup_package(backup_root: &std::path::Path, backup_id: &str) -> (bool, Opti
         return (false, None);
     }
     let dir = backup_root.join(backup_id);
-    let manifest = std::fs::read(dir.join("manifest.json")).ok().filter(|bytes| !bytes.is_empty());
-    let sqlite = std::fs::read(dir.join("gallery.sqlite.age"))
-        .ok()
-        .filter(|bytes| !bytes.is_empty());
-    let sha = manifest.as_ref().map(|bytes| sha256_hex(bytes));
-    (manifest.is_some() || sqlite.is_some(), sha)
+    let hash = crate::storage::local::hash_file(&package::manifest_path(&dir).0)
+        .ok().filter(|(size, _)| *size > 0).map(|(_, sha)| sha);
+    let sqlite = std::fs::metadata(dir.join("gallery.sqlite.age")).is_ok_and(|meta| meta.len() > 0);
+    (hash.is_some() || sqlite, hash)
 }
 
 fn write_salvage(
@@ -2617,7 +2637,10 @@ pub async fn backup_health(
     .await
     .map_err(anyhow::Error::from)?;
     let drill: (Option<i64>,) = sqlx::query_as(
-        "SELECT MAX(created_at) FROM restore_runs WHERE state = 'succeeded'",
+        "SELECT MAX(at) FROM (
+            SELECT created_at AS at FROM restore_runs WHERE state = 'succeeded'
+            UNION ALL SELECT completed_at AS at FROM backup_drills
+        )",
     )
     .fetch_one(pool)
     .await
@@ -2679,9 +2702,9 @@ pub async fn list_backups(
     free: Option<u64>,
 ) -> AppResult<serde_json::Value> {
     crate::auth::require_owner(actor)?;
-    let rows = sqlx::query_as::<_, (String, String, Option<i64>, Option<i64>, Option<i64>, Option<i64>, i64, i64, i64, i64)>(
+    let rows = sqlx::query_as::<_, (String, String, Option<i64>, Option<i64>, Option<i64>, Option<i64>, i64, i64, i64, i64, i64, Option<i64>, Option<i64>)>(
         "SELECT id, state, snapshot_at, catalog_revision, routing_epoch, verified_at, updated_at,
-                bytes_written, bytes_read_back, bytes_verified
+                bytes_written, bytes_read_back, bytes_verified, format_version, schema_version, replica_verified_at
          FROM backup_runs ORDER BY snapshot_at IS NULL, snapshot_at DESC, created_at DESC LIMIT 50",
     )
     .fetch_all(pool)
@@ -2691,15 +2714,16 @@ pub async fn list_backups(
     let schema = schema_version(pool).await.unwrap_or(0);
     let now = db::now_ms();
     Ok(json!({
-        "items": rows.into_iter().map(|(id, state, at, catalog, epoch, verified_at, updated_at, written, read_back, verified)| {
+        "items": rows.into_iter().map(|(id, state, at, catalog, epoch, verified_at, updated_at, written, read_back, verified, format, snapshot_schema, replica_verified_at)| {
             let ready = ready_id.as_deref() == Some(id.as_str());
             let phase = backup_phase(&state, at, verified_at, ready);
             json!({
                 "id": id,
                 "state": state,
                 "phase": phase,
-                "format_version": 1,
-                "schema_version": schema,
+                "format_version": format,
+                "schema_version": snapshot_schema.unwrap_or(schema),
+                "replica_verified_at": replica_verified_at,
                 "snapshot_at": at,
                 "completed_at": if state == "succeeded" || state == "unavailable" { Some(updated_at) } else { None },
                 "catalog_revision": catalog,
@@ -2718,9 +2742,9 @@ pub async fn list_backups(
 
 pub async fn get_backup(pool: &SqlitePool, actor: &Actor, id: &str) -> AppResult<serde_json::Value> {
     crate::auth::require_owner(actor)?;
-    let row = sqlx::query_as::<_, (String, String, Option<String>, Option<i64>, Option<i64>, Option<i64>, Option<i64>, i64, i64, i64, i64)>(
+    let row = sqlx::query_as::<_, (String, String, Option<String>, Option<i64>, Option<i64>, Option<i64>, Option<i64>, i64, i64, i64, i64, i64, Option<i64>, Option<i64>)>(
         "SELECT id, state, job_id, snapshot_at, catalog_revision, routing_epoch, verified_at, updated_at,
-                bytes_written, bytes_read_back, bytes_verified
+                bytes_written, bytes_read_back, bytes_verified, format_version, schema_version, replica_verified_at
          FROM backup_runs WHERE id = ?",
     )
     .bind(id)
@@ -2743,8 +2767,9 @@ pub async fn get_backup(pool: &SqlitePool, actor: &Actor, id: &str) -> AppResult
         "state": row.1,
         "phase": backup_phase(&row.1, row.3, row.6, ready),
         "job_id": row.2,
-        "format_version": 1,
-        "schema_version": schema,
+        "format_version": row.11,
+        "schema_version": row.12.unwrap_or(schema),
+        "replica_verified_at": row.13,
         "snapshot_at": row.3,
         "completed_at": if row.1 == "succeeded" || row.1 == "unavailable" { Some(row.7) } else { None },
         "catalog_revision": row.4,
@@ -2770,86 +2795,68 @@ pub async fn verify_backup(state: &AppState, actor: &Actor, id: &str) -> AppResu
         return Err(AppError::conflict("BACKUP_STATE", "only a finished backup can be verified"));
     }
     let dest = state.config.backup_root().join(id);
+    let keys = state.config.keys_root();
     let mut exceptions = Vec::new();
-    let manifest_bytes = match std::fs::read(dest.join("manifest.json")) {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            exceptions.push(json!({"code": "manifest"}));
-            Vec::new()
-        }
-    };
-    let digest = sha256_hex(&manifest_bytes);
-    match std::fs::read_to_string(dest.join("COMPLETE")) {
-        Ok(complete) => {
-            if verify_complete(&state.config.keys_root(), id, &digest, &complete).is_err() {
-                exceptions.push(json!({"code": "signature"}));
-            }
-        }
-        Err(_) => exceptions.push(json!({"code": "signature"})),
-    }
-    let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap_or(json!({}));
-    let temp = state.config.work_root().join("verify").join(format!("{id}.sqlite"));
-    if let Some(parent) = temp.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    match std::fs::read(dest.join("gallery.sqlite.age")) {
-        Ok(ciphertext) => match age_decrypt_bytes(&state.config.keys_root(), &ciphertext) {
-            Ok(plain) => {
-                if std::fs::write(&temp, &plain).is_err() {
-                    exceptions.push(json!({"code": "sqlite"}));
-                } else if let Ok(pool) = crate::db::connect(&temp).await {
-                    let integrity: Result<(String,), _> =
-                        sqlx::query_as("PRAGMA integrity_check").fetch_one(&pool).await;
-                    if integrity.map(|row| row.0).unwrap_or_default() != "ok" {
-                        exceptions.push(json!({"code": "sqlite"}));
-                    }
-                    let foreign = sqlx::query("PRAGMA foreign_key_check").fetch_all(&pool).await;
-                    if foreign.map(|rows| !rows.is_empty()).unwrap_or(true) {
-                        exceptions.push(json!({"code": "foreign_keys"}));
-                    }
-                } else {
-                    exceptions.push(json!({"code": "sqlite"}));
-                }
-            }
-            Err(_) => exceptions.push(json!({"code": "decrypt"})),
-        },
-        Err(_) => exceptions.push(json!({"code": "sqlite"})),
-    }
-    let _ = std::fs::remove_file(&temp);
+    let scratch = tempfile::tempdir_in(state.config.work_root()).map_err(anyhow::Error::from)?;
     let mut objects = 0_i64;
     let mut verified = 0_i64;
-    for item in manifest["items"].as_array().cloned().unwrap_or_default() {
-        objects += 1;
-        let Some(blob_id) = item["blob_id"].as_str() else {
-            exceptions.push(json!({"code": "manifest"}));
-            continue;
-        };
-        let object = item["object"].as_str().unwrap_or("").to_string();
-        let name = if object.is_empty() {
-            sha256_hex(blob_id.as_bytes())
-        } else {
-            object
-        };
-        let ciphertext = match std::fs::read(dest.join(&name)) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                exceptions.push(json!({"code": "object_missing", "blob_id": blob_id}));
-                continue;
+    match package::read_committed(&keys, &dest, id) {
+        Err(err) => {
+            let code = if err.to_string().contains("manifest") { "manifest" } else { "signature" };
+            exceptions.push(json!({"code": code}));
+        }
+        Ok((_, manifest)) => {
+            if package::check_config(&keys, &dest, &manifest).is_err() {
+                exceptions.push(json!({"code": "config"}));
             }
-        };
-        let plain = match age_decrypt_bytes(&state.config.keys_root(), &ciphertext) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                exceptions.push(json!({"code": "decrypt", "blob_id": blob_id}));
-                continue;
+            let sqlite = scratch.path().join("gallery.sqlite");
+            if decrypt_file(&keys, &dest.join("gallery.sqlite.age"), &sqlite,
+                manifest["sqlite_sha256"].as_str(), None).is_err()
+            {
+                exceptions.push(json!({"code": "sqlite"}));
+            } else if let Ok(pool) = crate::db::connect(&sqlite).await {
+                let integrity: Result<(String,), _> =
+                    sqlx::query_as("PRAGMA integrity_check").fetch_one(&pool).await;
+                if integrity.map(|row| row.0).unwrap_or_default() != "ok" {
+                    exceptions.push(json!({"code": "sqlite"}));
+                }
+                let foreign = sqlx::query("PRAGMA foreign_key_check").fetch_all(&pool).await;
+                if foreign.map(|rows| !rows.is_empty()).unwrap_or(true) {
+                    exceptions.push(json!({"code": "foreign_keys"}));
+                }
+                if manifest["instance_id"].is_string()
+                    && db::instance_id(&pool).await.ok().as_deref() != manifest["instance_id"].as_str()
+                {
+                    exceptions.push(json!({"code": "sqlite_identity"}));
+                }
+                pool.close().await;
+            } else {
+                exceptions.push(json!({"code": "sqlite"}));
             }
-        };
-        let size = item["size"].as_i64().unwrap_or(-1);
-        let sha = item["sha256"].as_str().unwrap_or("");
-        if plain.len() as i64 != size || sha256_hex(&plain) != sha {
-            exceptions.push(json!({"code": "object_hash", "blob_id": blob_id}));
-        } else {
-            verified += 1;
+            match package::items(&manifest) {
+                Err(_) => exceptions.push(json!({"code": "manifest"})),
+                Ok(items) => for item in items {
+                    objects += 1;
+                    let (Ok(name), Some(size), Some(sha)) = (
+                        package::object_name(item), item["size"].as_i64(), item["sha256"].as_str(),
+                    ) else {
+                        exceptions.push(json!({"code": "manifest"}));
+                        continue;
+                    };
+                    let ciphertext = dest.join(name);
+                    let blob_id = &item["blob_id"];
+                    if !ciphertext.is_file() {
+                        exceptions.push(json!({"code": "object_missing", "blob_id": blob_id}));
+                    } else if let Err(err) = decrypt_file(&keys, &ciphertext, &scratch.path().join("media"),
+                        item["ciphertext_sha256"].as_str(), Some((size, sha)))
+                    {
+                        let code = if err.to_string().contains("hash") { "object_hash" } else { "decrypt" };
+                        exceptions.push(json!({"code": code, "blob_id": blob_id}));
+                    } else {
+                        verified += 1;
+                    }
+                }
+            }
         }
     }
     let now = db::now_ms();
@@ -2889,64 +2896,116 @@ pub fn write_complete_marker(dir: &std::path::Path, digest: &str) -> Result<()> 
     Ok(())
 }
 
-fn verify_complete(keys: &PathBuf, backup_id: &str, digest: &str, complete: &str) -> Result<()> {
+pub(crate) fn verify_complete_version<'a>(
+    keys: &Path, backup_id: &str, digest: &str, complete: &'a str, version: i64,
+) -> Result<Option<&'a str>> {
     let mut lines = complete.lines();
-    let signed_digest = lines.next().unwrap_or("");
-    let sig_hex = lines.next().unwrap_or("");
-    if signed_digest != digest {
-        anyhow::bail!("backup digest mismatch");
+    if version == package::FORMAT {
+        anyhow::ensure!(lines.next() == Some("gallery-backup-v2"), "backup signature format");
     }
-    let bytes = std::fs::read(keys.join("backup-ed25519.key"))?;
-    let arr: [u8; 32] = bytes.as_slice().try_into().map_err(|_| anyhow!("backup signing key"))?;
-    let signing = SigningKey::from_bytes(&arr);
-    let sig_bytes = hex::decode(sig_hex).map_err(|_| anyhow!("backup signature"))?;
-    let signature = Signature::from_slice(&sig_bytes).map_err(|_| anyhow!("backup signature"))?;
-    signing
-        .verifying_key()
-        .verify(format!("{backup_id}:{digest}").as_bytes(), &signature)
-        .map_err(|_| anyhow!("backup signature mismatch"))?;
-    Ok(())
-}
-
-fn sign_complete(keys: &PathBuf, backup_id: &str, digest: &str) -> Result<String> {
-    std::fs::create_dir_all(keys)?;
-    let key_path = keys.join("backup-ed25519.key");
-    let signing = if key_path.exists() {
-        let bytes = std::fs::read(&key_path)?;
-        let arr: [u8; 32] = bytes.as_slice().try_into().unwrap_or([0u8; 32]);
-        SigningKey::from_bytes(&arr)
+    anyhow::ensure!(lines.next() == Some(digest), "backup digest mismatch");
+    let seal = if version == package::FORMAT {
+        let seal = lines.next().ok_or_else(|| anyhow!("backup signature seal"))?;
+        anyhow::ensure!(seal.len() == 64 && seal.bytes().all(|byte| byte.is_ascii_hexdigit()), "backup signature seal");
+        Some(seal)
     } else {
-        let mut rng = rand::rngs::OsRng;
-        let key = SigningKey::generate(&mut rng);
-        std::fs::write(&key_path, key.to_bytes())?;
-        key
+        None
     };
-    let msg = format!("{backup_id}:{digest}");
-    let sig = signing.sign(msg.as_bytes());
-    Ok(format!("{digest}\n{}", hex::encode(sig.to_bytes())))
+    let public = keys.join("backup-ed25519.pub");
+    let verifying = if public.exists() {
+        let bytes: [u8; 32] = std::fs::read(public)?.try_into().map_err(|_| anyhow!("backup signing public key"))?;
+        ed25519_dalek::VerifyingKey::from_bytes(&bytes)?
+    } else {
+        signing_key(keys, false)?.verifying_key()
+    };
+    let sig_bytes = hex::decode(lines.next().unwrap_or("")).map_err(|_| anyhow!("backup signature"))?;
+    let signature = Signature::from_slice(&sig_bytes).map_err(|_| anyhow!("backup signature"))?;
+    verifying.verify(signature_message(backup_id, digest, seal).as_bytes(), &signature)
+        .map_err(|_| anyhow!("backup signature mismatch"))?;
+    Ok(seal)
 }
 
-fn age_identity(keys: &PathBuf) -> Result<age::x25519::Identity> {
-    std::fs::create_dir_all(keys)?;
-    let path = keys.join("backup-age.key");
-    if path.exists() {
-        let s = std::fs::read_to_string(&path)?;
-        s.trim()
-            .parse::<age::x25519::Identity>()
-            .map_err(|e| anyhow!(e.to_string()))
+fn signature_message(backup_id: &str, digest: &str, seal: Option<&str>) -> String {
+    if let Some(seal) = seal {
+        format!("gallery-backup-v2:{backup_id}:{digest}:{seal}")
     } else {
-        let id = age::x25519::Identity::generate();
-        std::fs::write(&path, id.to_string().expose_secret())?;
-        Ok(id)
+        format!("{backup_id}:{digest}")
     }
 }
 
-pub fn age_encrypt_bytes(keys: &PathBuf, plaintext: &[u8]) -> Result<Vec<u8>> {
-    let id = age_identity(keys)?;
-    Ok(age::encrypt(&id.to_public(), plaintext)?)
+fn sign_complete(keys: &Path, backup_id: &str, digest: &str) -> Result<String> {
+    sign_complete_version(keys, backup_id, digest, None)
 }
 
-pub fn age_decrypt_bytes(keys: &PathBuf, ciphertext: &[u8]) -> Result<Vec<u8>> {
-    let id = age_identity(keys)?;
-    Ok(age::decrypt(&id, ciphertext)?)
+fn sign_complete_version(keys: &Path, backup_id: &str, digest: &str, seal: Option<&str>) -> Result<String> {
+    let signing = signing_key(keys, true)?;
+    let sig = signing.sign(signature_message(backup_id, digest, seal).as_bytes());
+    let hex = hex::encode(sig.to_bytes());
+    if let Some(seal) = seal {
+        Ok(format!("gallery-backup-v2\n{digest}\n{seal}\n{hex}"))
+    } else {
+        Ok(format!("{digest}\n{hex}"))
+    }
+}
+
+fn private_key_file(path: &Path, generated: &[u8]) -> Result<()> {
+    std::fs::create_dir_all(path.parent().ok_or_else(|| anyhow!("key directory"))?)?;
+    let mut temp = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
+    temp.write_all(generated)?;
+    temp.as_file().sync_all()?;
+    match temp.persist_noclobber(path) {
+        Ok(_) => Ok(()),
+        Err(err) if err.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(err) => Err(err.error.into()),
+    }
+}
+
+fn signing_key(keys: &Path, create: bool) -> Result<SigningKey> {
+    let path = keys.join("backup-ed25519.key");
+    if create && !path.exists() {
+        anyhow::ensure!(!keys.join("backup-ed25519.pub").exists(), "backup signing private key is missing");
+        let key = SigningKey::generate(&mut rand::rngs::OsRng);
+        private_key_file(&path, &key.to_bytes())?;
+    }
+    let bytes: [u8; 32] = std::fs::read(path)?.try_into().map_err(|_| anyhow!("backup signing key"))?;
+    Ok(SigningKey::from_bytes(&bytes))
+}
+
+pub(crate) fn age_identity(keys: &Path, create: bool) -> Result<age::x25519::Identity> {
+    read_age_identity(&keys.join("backup-age.key"), create)
+}
+
+fn read_age_identity(path: &Path, create: bool) -> Result<age::x25519::Identity> {
+    if create && !path.exists() {
+        let id = age::x25519::Identity::generate();
+        private_key_file(path, id.to_string().expose_secret().as_bytes())?;
+    }
+    std::fs::read_to_string(path)?.trim().parse().map_err(|err| anyhow!("backup age key: {err}"))
+}
+
+fn seal_plan(keys: &Path, plaintext: &[u8]) -> Result<Vec<u8>> {
+    let journal = read_age_identity(&keys.join("backup-journal-age.key"), true)?;
+    Ok(age::encrypt(&journal.to_public(), plaintext)?)
+}
+
+fn open_plan(keys: &Path, ciphertext: &[u8]) -> Result<Vec<u8>> {
+    let journal = read_age_identity(&keys.join("backup-journal-age.key"), false)?;
+    Ok(age::decrypt(&journal, ciphertext)?)
+}
+
+pub(crate) fn age_recipient(keys: &Path) -> Result<age::x25519::Recipient> {
+    let path = keys.join("backup-age.pub");
+    if path.exists() {
+        std::fs::read_to_string(path)?.trim().parse().map_err(|err| anyhow!("backup age recipient: {err}"))
+    } else {
+        Ok(age_identity(keys, true)?.to_public())
+    }
+}
+
+pub fn age_encrypt_bytes(keys: &Path, plaintext: &[u8]) -> Result<Vec<u8>> {
+    Ok(age::encrypt(&age_recipient(keys)?, plaintext)?)
+}
+
+pub fn age_decrypt_bytes(keys: &Path, ciphertext: &[u8]) -> Result<Vec<u8>> {
+    Ok(age::decrypt(&age_identity(keys, false)?, ciphertext)?)
 }

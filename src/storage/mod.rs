@@ -9,6 +9,16 @@ pub use webdav::WebDavBackend;
 
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use futures_util::{Stream, StreamExt};
+use sha2::{Digest, Sha256};
+use std::pin::Pin;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
+
+#[derive(Debug, thiserror::Error)]
+#[error("storage object length or checksum mismatch")]
+pub struct ObjectMismatch;
+
+pub type ObjectStream = Pin<Box<dyn Stream<Item = Result<bytes::Bytes>> + Send>>;
 use serde::{Deserialize, Serialize};
 use sqlx::{SqlitePool, Transaction};
 use std::path::PathBuf;
@@ -49,6 +59,7 @@ pub trait MediaBackend: Send + Sync {
     }
     async fn head(&self, key: &str) -> Result<Option<ObjectMeta>>;
     async fn open(&self, key: &str, range: Option<(u64, u64)>) -> Result<Vec<u8>>;
+    async fn stream(&self, key: &str) -> Result<ObjectStream>;
     fn local_file(&self, _key: &str) -> Option<std::path::PathBuf> {
         None
     }
@@ -91,6 +102,66 @@ impl Storage {
 
     pub async fn get_bytes(&self, key: &str) -> Result<Vec<u8>> {
         self.inner.open(key, None).await
+    }
+
+    pub async fn hash_object(&self, key: &str, size: i64) -> Result<(String, Option<u8>)> {
+        self.transfer(key, size, tokio::io::sink()).await
+    }
+
+    pub async fn copy_verified(
+        &self,
+        key: &str,
+        size: i64,
+        sha: &str,
+        path: &std::path::Path,
+    ) -> Result<()> {
+        let file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .await?;
+        let mut file = tokio::io::BufWriter::new(file);
+        let (actual, _) = self.transfer(key, size, &mut file).await?;
+        anyhow::ensure!(actual == sha, ObjectMismatch);
+        file.into_inner().sync_all().await?;
+        Ok(())
+    }
+
+    async fn transfer(
+        &self,
+        key: &str,
+        size: i64,
+        mut output: impl AsyncWrite + Unpin,
+    ) -> Result<(String, Option<u8>)> {
+        let expected = u64::try_from(size)?;
+        let mut count = 0u64;
+        let mut first = None;
+        let mut digest = Sha256::new();
+        let mut chunks = self.inner.stream(key).await?;
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk?;
+            count += chunk.len() as u64;
+            anyhow::ensure!(count <= expected, ObjectMismatch);
+            first = first.or_else(|| chunk.first().copied());
+            digest.update(&chunk);
+            output.write_all(&chunk).await?;
+        }
+        anyhow::ensure!(count == expected, ObjectMismatch);
+        output.flush().await?;
+        Ok((hex::encode(digest.finalize()), first))
+    }
+
+    pub async fn read_bounded(&self, key: &str, limit: usize) -> Result<Vec<u8>> {
+        let mut chunks = self.inner.stream(key).await?;
+        let mut bytes = Vec::new();
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk?;
+            anyhow::ensure!(chunk.len() <= limit - bytes.len(), "storage object exceeds limit");
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
     }
 
     pub async fn walk_owned(&self, after: Option<&str>, limit: i64) -> Result<Vec<String>> {

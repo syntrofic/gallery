@@ -7,306 +7,5491 @@ info:
     Design documents write action suffixes with a colon. The server accepts that
     form and rewrites each colon to a slash before routing.
 servers:
-  - url: /api/v1
+- url: "/api/v1"
 paths:
-  /setup/status:
+  "/setup/status":
     get:
-      responses: { "200": { description: Owner initialization flag } }
-  /setup/owner:
+      operationId: setup_status
+      summary: Owner initialization flag
+      security: []
+      responses:
+        '200':
+          description: Owner initialization flag
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Initialized"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/setup/owner":
     post:
-      responses: { "201": { description: Owner created, no session issued } }
-  /session:
+      operationId: setup_owner
+      summary: Owner created, no session issued
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/SetupOwner"
+      responses:
+        '201':
+          description: Owner created, no session issued
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Initialized"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/session":
     get:
-      responses: { "200": { description: Anonymous or authenticated session } }
+      operationId: get_session
+      summary: Anonymous or authenticated session
+      security:
+      - {}
+      - GallerySession: []
+      responses:
+        '200':
+          description: Anonymous or authenticated session
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Session"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
     post:
-      responses: { "201": { description: Logged in } }
+      operationId: login
+      summary: Logged in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/Login"
+      responses:
+        '201':
+          description: Logged in
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AuthenticatedSession"
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
     delete:
-      responses: { "204": { description: Logged out } }
-  /admin/account/password:
+      operationId: logout
+      summary: Logged out
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '204':
+          description: Logged out
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/account/password":
     patch:
-      responses: { "204": { description: Owner password changed and sessions revoked } }
-  /account/password:
+      operationId: admin_password
+      summary: Owner password changed and sessions revoked
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/PasswordChange"
+      responses:
+        '204':
+          description: Owner password changed and sessions revoked
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/account/password":
     patch:
-      responses: { "204": { description: Current account password changed } }
-  /admin/users:
+      operationId: account_password
+      summary: Current account password changed
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/PasswordChange"
+      responses:
+        '204':
+          description: Current account password changed
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/users":
     get:
-      responses: { "200": { description: Local accounts } }
+      operationId: list_users
+      summary: Local accounts
+      responses:
+        '200':
+          description: Local accounts
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/LocalAccounts"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
     post:
-      responses: { "201": { description: Collaborator created } }
-  /admin/users/{user_id}:
+      operationId: create_user
+      summary: Collaborator created
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/Login"
+      responses:
+        '201':
+          description: Collaborator created
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/LocalAccount"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/users/{user_id}":
+    parameters:
+    - name: user_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     patch:
-      responses: { "200": { description: Account enabled or disabled } }
-  /admin/users/{user_id}/reset-password:
+      operationId: patch_user
+      summary: Account enabled or disabled
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/AccountPatch"
+      responses:
+        '200':
+          description: Account enabled or disabled
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/LocalAccount"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/users/{user_id}/reset-password":
+    parameters:
+    - name: user_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "204": { description: Password reset and sessions revoked } }
-  /admin/settings:
+      operationId: reset_password
+      summary: Password reset and sessions revoked
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/PasswordReset"
+      responses:
+        '204':
+          description: Password reset and sessions revoked
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/settings":
     get:
-      responses: { "200": { description: Desensitized settings } }
-  /admin/settings/{section}:
+      operationId: admin_settings
+      summary: Desensitized settings
+      responses:
+        '200':
+          description: Desensitized settings
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Settings"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/settings/{section}":
+    parameters:
+    - name: section
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     patch:
-      responses: { "200": { description: Settings section updated } }
-  /admin/runs/{id}:
+      operationId: patch_settings
+      summary: Settings section updated
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/SettingsPatch"
+      responses:
+        '200':
+          description: Settings section updated
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Settings"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/runs/{id}":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Maintenance run summary } }
-  /admin/audit:
+      operationId: admin_run
+      summary: Maintenance run summary
+      responses:
+        '200':
+          description: Maintenance run summary
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/MaintenanceRun"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/audit":
     get:
-      responses: { "200": { description: Owner audit records } }
-  /admin/storage/probe:
+      operationId: admin_audit
+      summary: Owner audit records
+      responses:
+        '200':
+          description: Owner audit records
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AuditEvents"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/storage/probe":
     post:
-      responses: { "200": { description: Active storage capability report } }
-  /admin/variants/stats:
-    get:
-      responses: { "200": { description: Variant publication ratio, backlog, and missing previews } }
-  /admin/jobs/summary:
-    get:
-      responses: { "200": { description: Queue backlog, pauses, and recent failures } }
-  /admin/audit.jsonl:
-    get:
-      responses: { "200": { description: Owner audit export, one JSON object per line } }
-  /admin/job-pauses:
+      operationId: storage_probe
+      summary: Active storage capability report
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Active storage capability report
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/StorageCapabilities"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/reconcile":
     post:
-      responses: { "204": { description: Job kind paused } }
-  /admin/job-pauses/{kind}:
+      operationId: reconcile
+      summary: Reconcile accepted
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '202':
+          description: Reconcile accepted
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Accepted"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/search/rebuild":
+    post:
+      operationId: rebuild_search
+      summary: Search index rebuild accepted
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '202':
+          description: Search index rebuild accepted
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Accepted"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/jobs/summary":
+    get:
+      operationId: job_summary
+      summary: Queue backlog, pauses, and recent failures
+      responses:
+        '200':
+          description: Queue backlog, pauses, and recent failures
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/JobSummary"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/audit.jsonl":
+    get:
+      operationId: audit_export
+      summary: Owner audit export, one JSON object per line
+      responses:
+        '200':
+          description: Owner audit export, one JSON object per line
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/variants/stats":
+    get:
+      operationId: variant_stats
+      summary: Variant publication ratio, backlog, and missing previews
+      responses:
+        '200':
+          description: Variant publication ratio, backlog, and missing previews
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/VariantStats"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/job-pauses":
+    post:
+      operationId: pause_job_kind
+      summary: Job kind paused
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/JobPause"
+      responses:
+        '204':
+          description: Job kind paused
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/job-pauses/{kind}":
+    parameters:
+    - name: kind
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     delete:
-      responses: { "204": { description: Job kind resumed } }
-  /admin/reconcile:
-    post:
-      responses: { "202": { description: Reconcile accepted } }
-  /admin/search/rebuild:
-    post:
-      responses: { "202": { description: Search index rebuild accepted } }
-  /admin/backups:
+      operationId: resume_job_kind
+      summary: Job kind resumed
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '204':
+          description: Job kind resumed
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/backups":
     get:
-      responses: { "200": { description: Backup runs } }
+      operationId: list_backups
+      summary: Backup runs
+      responses:
+        '200':
+          description: Backup runs
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Backups"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
     post:
-      responses: { "202": { description: Backup accepted } }
-  /admin/backups/{id}:
+      operationId: create_backup
+      summary: Backup accepted
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IdempotencyKey"
+      - name: dry_run
+        in: query
+        required: false
+        schema:
+          type: boolean
+      - name: backup_repository_id
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '202':
+          description: Backup accepted
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Backup"
+        '200':
+          description: Create backup
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/BackupPreview"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/backups/{id}":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Backup status } }
-  /admin/restores:
+      operationId: get_backup
+      summary: Backup status
+      responses:
+        '200':
+          description: Backup status
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Backup"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/backups/{id}/verify":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "202": { description: Restore accepted } }
-  /admin/storage-migrations:
+      operationId: verify_backup
+      summary: Verify backup
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Verify backup
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/BackupVerification"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/backups/{id}/abort":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "200": { description: Storage migration plan } }
-  /admin/storage-migrations/{id}:
+      operationId: abort_backup
+      summary: Abort backup
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Abort backup
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Backup"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/backups/{id}/resume":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: resume_backup
+      summary: Resume backup
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Resume backup
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Backup"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/restores":
+    post:
+      operationId: create_restore
+      summary: Restore accepted
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/RestoreRequest"
+      responses:
+        '202':
+          description: Restore accepted
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Restore"
+        '200':
+          description: Create restore
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/RestoreGap"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/restores/{id}":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Migration status } }
-  /admin/storage-migrations/{id}/start:
-    post:
-      responses: { "202": { description: Planned migration started } }
-  /admin/storage-migrations/{id}/pause:
-    post:
-      responses: { "200": { description: Migration paused } }
-  /admin/storage-migrations/{id}/resume:
-    post:
-      responses: { "200": { description: Migration resumed } }
-  /admin/storage-migrations/{id}/abort:
-    post:
-      responses: { "200": { description: Migration aborted before cutover } }
-  /admin/storage-migrations/{id}/rollback:
-    post:
-      responses: { "200": { description: Route rolled back after cutover } }
-  /admin/storage-migrations/{id}/items:
+      operationId: get_restore
+      summary: Get restore
+      responses:
+        '200':
+          description: Get restore
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Restore"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/restores/{id}/report":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Migration objects without credentials } }
-  /admin/storage-migrations/{id}/cutover:
+      operationId: restore_report
+      summary: Restore report
+      responses:
+        '200':
+          description: Restore report
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/RestoreReport"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/restores/{id}/abort":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "200": { description: Route switched after the seal matches } }
-  /admin/storage-migrations/{id}/retire:
+      operationId: abort_restore
+      summary: Abort restore
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Abort restore
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Restore"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/restores/{id}/resume":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "200": { description: Retire preview or confirmed source cleanup } }
-  /albums:
+      operationId: resume_restore
+      summary: Resume restore
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Resume restore
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Restore"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/restores/{id}/promote":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: promote_restore
+      summary: Promote restore
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/RestorePromotion"
+      responses:
+        '200':
+          description: Promote restore
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Promotion"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/recovery/early-snapshot":
+    post:
+      operationId: early_snapshot
+      summary: Early snapshot
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Early snapshot
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/EarlySnapshot"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/storage-migrations":
+    post:
+      operationId: plan_migration
+      summary: Storage migration plan
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/StorageTarget"
+      responses:
+        '200':
+          description: Storage migration plan
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Migration"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/storage-migrations/{id}":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Visible albums } }
+      operationId: get_migration
+      summary: Migration status
+      responses:
+        '200':
+          description: Migration status
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Migration"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/storage-migrations/{id}/start":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "201": { description: Album created } }
-  /albums/{album_id}:
+      operationId: begin_migration
+      summary: Planned migration started
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ExpectedRevision"
+      responses:
+        '202':
+          description: Planned migration started
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Migration"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/storage-migrations/{id}/pause":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: pause_migration
+      summary: Migration paused
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Migration paused
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Migration"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/storage-migrations/{id}/resume":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: resume_migration
+      summary: Migration resumed
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Migration resumed
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Migration"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/storage-migrations/{id}/abort":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: abort_migration
+      summary: Migration aborted before cutover
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Migration aborted before cutover
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Migration"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/storage-migrations/{id}/rollback":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: rollback_migration
+      summary: Route rolled back after cutover
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Route rolled back after cutover
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Migration"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/storage-migrations/{id}/degrade":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: degrade_migration
+      summary: Degrade migration
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/DegradeStorage"
+      responses:
+        '200':
+          description: Degrade migration
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Migration"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/storage-migrations/{id}/cleanup":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: authorize_cleanup
+      summary: Authorize cleanup
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/Cleanup"
+      responses:
+        '200':
+          description: Authorize cleanup
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Migration"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/storage-migrations/{id}/items":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Album } }
+      operationId: migration_items
+      summary: Migration objects without credentials
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Migration objects without credentials
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/MigrationItems"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/storage-migrations/{id}/cutover":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: cutover_migration
+      summary: Route switched after the seal matches
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ExpectedRevision"
+      responses:
+        '200':
+          description: Route switched after the seal matches
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Migration"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/storage-migrations/{id}/retire":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: retire_migration
+      summary: Retire preview or confirmed source cleanup
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/RetirementRequest"
+      responses:
+        '200':
+          description: Retire preview or confirmed source cleanup
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Retirement"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums":
+    get:
+      operationId: list_albums
+      summary: Visible albums
+      security:
+      - {}
+      - GallerySession: []
+      responses:
+        '200':
+          description: Visible albums
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Albums"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+    post:
+      operationId: create_album
+      summary: Album created
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/AlbumCreate"
+      responses:
+        '201':
+          description: Album created
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Album"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    get:
+      operationId: get_album
+      summary: Album
+      security:
+      - {}
+      - GallerySession: []
+      responses:
+        '200':
+          description: Album
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Album"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
     patch:
-      responses: { "200": { description: Album updated } }
+      operationId: patch_album
+      summary: Album updated
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IdempotencyKey"
+      - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/AlbumPatch"
+      responses:
+        '200':
+          description: Album updated
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Album"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
     delete:
-      responses: { "204": { description: Album soft-deleted } }
-  /albums/{album_id}/access:
+      operationId: delete_album
+      summary: Album soft-deleted
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IfMatch"
+      responses:
+        '204':
+          description: Album soft-deleted
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}/access":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     patch:
-      responses: { "200": { description: Album ACL updated } }
-  /albums/{album_id}/images:
+      operationId: patch_access
+      summary: Album ACL updated
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/AccessPatch"
+      responses:
+        '200':
+          description: Album ACL updated
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Album"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}/images":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Album images } }
-  /albums/{album_id}/images/{image_id}:
+      operationId: list_images
+      summary: Album images
+      security:
+      - {}
+      - GallerySession: []
+      parameters:
+      - name: sort
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - manual
+          - created_desc
+          - created_asc
+          - name_asc
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Album images
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Images"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}/images/{image_id}":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    - name: image_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Image detail with neighbors } }
-  /albums/{album_id}/images/{image_id}/variants/{variant_id}/body:
+      operationId: get_image
+      summary: Image detail with neighbors
+      security:
+      - {}
+      - GallerySession: []
+      responses:
+        '200':
+          description: Image detail with neighbors
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AlbumImage"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+      parameters:
+      - name: sort
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - manual
+          - created_desc
+          - created_asc
+          - name_asc
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+  "/albums/{album_id}/images/{image_id}/variants/{variant_id}/body":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    - name: image_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    - name: variant_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Published variant bytes } }
-  /albums/{album_id}/images/{image_id}/original-view:
+      operationId: variant_body
+      summary: Published variant bytes
+      security:
+      - {}
+      - GallerySession: []
+      parameters:
+      - "$ref": "#/components/parameters/Range"
+      - "$ref": "#/components/parameters/IfNoneMatch"
+      - "$ref": "#/components/parameters/IfRange"
+      responses:
+        '200':
+          description: Published variant bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
+            image/tiff:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '206':
+          description: Partial content for a satisfiable byte range
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
+            image/tiff:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '304':
+          description: Representation unchanged
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}/images/{image_id}/original-view":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    - name: image_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Original bytes for viewing } }
-  /albums/{album_id}/images/{image_id}/original-download:
+      operationId: original_view
+      summary: Original bytes for viewing
+      security:
+      - {}
+      - GallerySession: []
+      parameters:
+      - "$ref": "#/components/parameters/Range"
+      - "$ref": "#/components/parameters/IfNoneMatch"
+      - "$ref": "#/components/parameters/IfRange"
+      responses:
+        '200':
+          description: Original bytes for viewing
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
+            image/tiff:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '206':
+          description: Partial content for a satisfiable byte range
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
+            image/tiff:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '304':
+          description: Representation unchanged
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}/images/{image_id}/original-download":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    - name: image_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Original bytes as a download } }
-  /albums/{album_id}/items/add:
+      operationId: original_download
+      summary: Original bytes as a download
+      security:
+      - {}
+      - GallerySession: []
+      parameters:
+      - "$ref": "#/components/parameters/Range"
+      - "$ref": "#/components/parameters/IfNoneMatch"
+      - "$ref": "#/components/parameters/IfRange"
+      responses:
+        '200':
+          description: Original bytes as a download
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
+            image/tiff:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '206':
+          description: Partial content for a satisfiable byte range
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
+            image/tiff:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '304':
+          description: Representation unchanged
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}/items/add":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "200": { description: Images added } }
-  /albums/{album_id}/items/remove:
+      operationId: items_add
+      summary: Images added
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/AlbumItems"
+      responses:
+        '200':
+          description: Images added
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AlbumMutation"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}/items/remove":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "200": { description: Images removed } }
-  /albums/{album_id}/items/move:
+      operationId: items_remove
+      summary: Images removed
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/AlbumItems"
+      responses:
+        '200':
+          description: Images removed
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AlbumMutation"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}/items/move":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "200": { description: Images moved } }
-  /albums/{album_id}/items/reorder:
+      operationId: items_move
+      summary: Images moved
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/AlbumItems"
+      responses:
+        '200':
+          description: Images moved
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AlbumMutation"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}/items/reorder":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "200": { description: Image reordered } }
-  /albums/{album_id}/items/rename:
+      operationId: items_reorder
+      summary: Image reordered
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/AlbumItems"
+      responses:
+        '200':
+          description: Image reordered
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AlbumMutation"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}/items/rename":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "200": { description: Album-specific display name changed } }
-  /albums/{album_id}/uploads:
+      operationId: items_rename
+      summary: Album-specific display name changed
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/RenameImage"
+      responses:
+        '200':
+          description: Album-specific display name changed
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AlbumMutation"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}/uploads":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "201": { description: Upload batch created } }
-  /albums/{album_id}/downloads/selected:
+      operationId: create_upload
+      summary: Upload batch created
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/UploadRequest"
+      responses:
+        '201':
+          description: Upload batch created
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/UploadAccepted"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}/downloads/selected":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "200": { description: Per-image original claims } }
-  /albums/{album_id}/archives:
+      operationId: selected_download
+      summary: Per-image original claims
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/AlbumItems"
+      responses:
+        '200':
+          description: Per-image original claims
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SelectedDownloads"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}/archives":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "202": { description: Original ZIP accepted } }
-  /albums/{album_id}/restore:
+      operationId: create_archive
+      summary: Original ZIP accepted
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IdempotencyKey"
+      responses:
+        '202':
+          description: Original ZIP accepted
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Archive"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/albums/{album_id}/restore":
+    parameters:
+    - name: album_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "200": { description: Album restored } }
-  /uploads:
+      operationId: restore_album
+      summary: Album restored
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Album restored
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Album"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/uploads":
     get:
-      responses: { "200": { description: Upload batches } }
-  /uploads/{batch_id}:
+      operationId: list_uploads
+      summary: Upload batches
+      responses:
+        '200':
+          description: Upload batches
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Uploads"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/uploads/{batch_id}":
+    parameters:
+    - name: batch_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Upload batch } }
+      operationId: get_upload
+      summary: Upload batch
+      responses:
+        '200':
+          description: Upload batch
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Upload"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
     delete:
-      responses: { "202": { description: In-progress batch canceled } }
-  /uploads/{batch_id}/items/{item_id}/body:
+      operationId: cancel_upload
+      summary: In-progress batch canceled
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '202':
+          description: In-progress batch canceled
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Upload"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+        '200':
+          description: Batch already finished or canceled
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Upload"
+  "/uploads/{batch_id}/items/{item_id}/body":
+    parameters:
+    - name: batch_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    - name: item_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     put:
-      responses: { "201": { description: Image committed } }
-  /downloads/claims/{claim_id}/body:
+      operationId: upload_body
+      summary: Image committed
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: Image committed
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/UploadCommitted"
+        '200':
+          description: Upload body
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/UploadCommitted"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/downloads/claims/{claim_id}/body":
+    parameters:
+    - name: claim_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Claimed original } }
-  /archives:
+      operationId: claim_body
+      summary: Claimed original
+      parameters:
+      - "$ref": "#/components/parameters/Range"
+      - "$ref": "#/components/parameters/IfNoneMatch"
+      - "$ref": "#/components/parameters/IfRange"
+      responses:
+        '200':
+          description: Claimed original
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
+            image/tiff:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '206':
+          description: Partial content for a satisfiable byte range
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
+            image/tiff:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '304':
+          description: Representation unchanged
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/archives":
     get:
-      responses: { "200": { description: Archive packages } }
-  /archives/{id}:
+      operationId: list_archives
+      summary: Archive packages
+      responses:
+        '200':
+          description: Archive packages
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Archives"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/archives/{id}":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Archive status } }
-  /archives/{id}/body:
+      operationId: get_archive
+      summary: Archive status
+      responses:
+        '200':
+          description: Archive status
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Archive"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/archives/{id}/body":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: ZIP bytes } }
-  /jobs:
+      operationId: archive_body
+      summary: ZIP bytes
+      parameters:
+      - "$ref": "#/components/parameters/Range"
+      - "$ref": "#/components/parameters/IfNoneMatch"
+      - "$ref": "#/components/parameters/IfRange"
+      responses:
+        '200':
+          description: ZIP bytes
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '206':
+          description: Partial content for a satisfiable byte range
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '304':
+          description: Representation unchanged
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/jobs":
     get:
-      responses: { "200": { description: Visible jobs } }
-  /jobs/{id}:
+      operationId: list_jobs
+      summary: Visible jobs
+      responses:
+        '200':
+          description: Visible jobs
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Jobs"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/jobs/{id}":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Job status } }
-  /jobs/{id}/cancel:
+      operationId: get_job
+      summary: Job status
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Job"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/jobs/{id}/cancel":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "202": { description: Cancel requested } }
-  /jobs/{id}/retry:
+      operationId: cancel_job
+      summary: Cancel requested
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '202':
+          description: Cancel requested
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Job"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/jobs/{id}/retry":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "202": { description: Retry accepted } }
-  /capabilities:
+      operationId: retry_job
+      summary: Retry accepted
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '202':
+          description: Retry accepted
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Job"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/capabilities":
     get:
-      responses: { "200": { description: Codec and limit capabilities } }
-  /variant-profiles/current:
+      operationId: capabilities
+      summary: Codec and limit capabilities
+      security: []
+      responses:
+        '200':
+          description: Codec and limit capabilities
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Capabilities"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/variant-profiles/current":
     get:
-      responses: { "200": { description: Current variant profile } }
+      operationId: get_profile
+      summary: Current variant profile
+      security: []
+      responses:
+        '200':
+          description: Current variant profile
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/VariantProfile"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
     put:
-      responses: { "202": { description: New profile revision accepted } }
-  /conversions:
+      operationId: put_profile
+      summary: New profile revision accepted
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                "$ref": "#/components/schemas/VariantSpec"
+      responses:
+        '202':
+          description: New profile revision accepted
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/VariantProfile"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+        '200':
+          description: Identical profile already current
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/VariantProfile"
+  "/conversions":
     post:
-      responses: { "202": { description: Conversion accepted } }
-  /conversions/{id}:
+      operationId: create_conversion
+      summary: Conversion accepted
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ConversionRequest"
+      responses:
+        '202':
+          description: Conversion accepted
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Conversion"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/conversions/{id}":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Conversion status } }
-  /conversions/{id}/outputs/{output_id}/body:
+      operationId: get_conversion
+      summary: Conversion status
+      responses:
+        '200':
+          description: Conversion status
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Conversion"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/conversions/{id}/outputs/{output_id}/body":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    - name: output_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Conversion output } }
-  /images/{image_id}/caption:
+      operationId: conversion_body
+      summary: Conversion output
+      parameters:
+      - "$ref": "#/components/parameters/Range"
+      - "$ref": "#/components/parameters/IfNoneMatch"
+      - "$ref": "#/components/parameters/IfRange"
+      responses:
+        '200':
+          description: Conversion output
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '206':
+          description: Partial content for a satisfiable byte range
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '304':
+          description: Representation unchanged
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/images/{image_id}/caption":
+    parameters:
+    - name: image_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     patch:
-      responses: { "200": { description: Human caption saved } }
-  /images/{image_id}/trash:
+      operationId: patch_caption
+      summary: Human caption saved
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CaptionPatch"
+      responses:
+        '200':
+          description: Human caption saved
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Caption"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/images/{image_id}/trash":
+    parameters:
+    - name: image_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "200": { description: Image trashed } }
-  /images/{image_id}/restore:
+      operationId: trash_image
+      summary: Image trashed
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/LifecycleChange"
+      responses:
+        '200':
+          description: Image trashed
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Lifecycle"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/images/{image_id}/restore":
+    parameters:
+    - name: image_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "200": { description: Image restored } }
-  /images/{image_id}/purge:
+      operationId: restore_image
+      summary: Image restored
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/LifecycleChange"
+      responses:
+        '200':
+          description: Image restored
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Lifecycle"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/images/{image_id}/purge":
+    parameters:
+    - name: image_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     post:
-      responses: { "202": { description: Purge accepted } }
-  /library/images:
+      operationId: purge_image
+      summary: Purge accepted
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/LifecycleChange"
+      responses:
+        '202':
+          description: Purge accepted
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Lifecycle"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+        '200':
+          description: Purge already in progress
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Lifecycle"
+  "/library/entry":
     get:
-      responses: { "200": { description: Owner library } }
-  /library/images/{image_id}:
-    get:
-      responses: { "200": { description: Owner image } }
-  /library/images/{image_id}/variants/{variant_id}/body:
-    get:
-      responses: { "200": { description: Owner unassigned variant bytes } }
-  /library/images/{image_id}/original-view:
-    get:
-      responses: { "200": { description: Owner unassigned original inline } }
-  /library/images/{image_id}/original-download:
-    get:
-      responses: { "200": { description: Owner unassigned original download } }
-  /trash:
-    get:
-      responses: { "200": { description: Trashed images } }
-  /search:
-    get:
-      responses: { "200": { description: Authorized search } }
-  /ai/scans:
+      operationId: library_entry
+      summary: Library entry
+      security: []
+      responses:
+        '200':
+          description: Library entry
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/LibraryEntry"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/admin/source/freeze":
     post:
-      responses: { "202": { description: Scan accepted when AI is enabled } }
-  /ai/scans/{id}:
+      operationId: freeze_source
+      summary: Freeze source
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Freeze source
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SourceFreeze"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/library/images":
     get:
-      responses: { "200": { description: Scan status } }
-  /ai/scans/{id}/cancel:
-    post:
-      responses: { "200": { description: Scan canceled; shared caption jobs stay queued } }
-  /agent/sessions:
+      operationId: library_images
+      summary: Owner library
+      parameters:
+      - name: unassigned
+        in: query
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: Owner library
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/LibraryImages"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/library/images/{image_id}":
+    parameters:
+    - name: image_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Agent sessions } }
-    post:
-      responses: { "201": { description: Agent session created when enabled } }
-  /agent/sessions/{id}:
+      operationId: library_image
+      summary: Owner image
+      responses:
+        '200':
+          description: Owner image
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Image"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/library/images/{image_id}/variants/{variant_id}/body":
+    parameters:
+    - name: image_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    - name: variant_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Agent session } }
-  /agent/sessions/{id}/messages:
+      operationId: library_variant_body
+      summary: Owner unassigned variant bytes
+      parameters:
+      - "$ref": "#/components/parameters/Range"
+      - "$ref": "#/components/parameters/IfNoneMatch"
+      - "$ref": "#/components/parameters/IfRange"
+      responses:
+        '200':
+          description: Owner unassigned variant bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
+            image/tiff:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '206':
+          description: Partial content for a satisfiable byte range
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
+            image/tiff:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '304':
+          description: Representation unchanged
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/library/images/{image_id}/original-view":
+    parameters:
+    - name: image_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Session messages } }
-    post:
-      responses: { "202": { description: Message stored without calling a model } }
-  /agent/sessions/{id}/messages/{message_id}/remove:
-    post:
-      responses: { "200": { description: Unsent message removed } }
-  /agent/sessions/{id}/messages/{message_id}/resend:
-    post:
-      responses: { "200": { description: Unknown delivery explicitly resent } }
-  /agent/sessions/{id}/turns/{turn_id}/stop:
-    post:
-      responses: { "200": { description: Turn stopped, submitted jobs continue } }
-  /events:
+      operationId: library_original_view
+      summary: Owner unassigned original inline
+      parameters:
+      - "$ref": "#/components/parameters/Range"
+      - "$ref": "#/components/parameters/IfNoneMatch"
+      - "$ref": "#/components/parameters/IfRange"
+      responses:
+        '200':
+          description: Owner unassigned original inline
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
+            image/tiff:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '206':
+          description: Partial content for a satisfiable byte range
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
+            image/tiff:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '304':
+          description: Representation unchanged
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/library/images/{image_id}/original-download":
+    parameters:
+    - name: image_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
     get:
-      responses: { "200": { description: Server-sent events } }
+      operationId: library_original_download
+      summary: Owner unassigned original download
+      parameters:
+      - "$ref": "#/components/parameters/Range"
+      - "$ref": "#/components/parameters/IfNoneMatch"
+      - "$ref": "#/components/parameters/IfRange"
+      responses:
+        '200':
+          description: Owner unassigned original download
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
+            image/tiff:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '206':
+          description: Partial content for a satisfiable byte range
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+            image/png:
+              schema:
+                type: string
+                format: binary
+            image/gif:
+              schema:
+                type: string
+                format: binary
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/bmp:
+              schema:
+                type: string
+                format: binary
+            image/tiff:
+              schema:
+                type: string
+                format: binary
+          headers:
+            ETag:
+              schema:
+                type: string
+            Content-Range:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+        '304':
+          description: Representation unchanged
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/trash":
+    get:
+      operationId: list_trash
+      summary: Trashed images
+      responses:
+        '200':
+          description: Trashed images
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Trash"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/search":
+    get:
+      operationId: search
+      summary: Authorized search
+      security:
+      - {}
+      - GallerySession: []
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: kind
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: album_id
+        in: query
+        required: false
+        schema:
+          type: string
+          minLength: 1
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Authorized search
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SearchResults"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/ai/scans":
+    post:
+      operationId: ai_scan
+      summary: Scan accepted when AI is enabled
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ScanRequest"
+      responses:
+        '202':
+          description: Scan accepted when AI is enabled
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Scan"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/ai/scans/{id}":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    get:
+      operationId: get_scan
+      summary: Scan status
+      responses:
+        '200':
+          description: Scan status
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Scan"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/ai/scans/{id}/cancel":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: cancel_scan
+      summary: Scan canceled; shared caption jobs stay queued
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Scan canceled; shared caption jobs stay queued
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Scan"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/agent/sessions":
+    get:
+      operationId: list_agent
+      summary: Agent sessions
+      responses:
+        '200':
+          description: Agent sessions
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentSessions"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+    post:
+      operationId: create_agent
+      summary: Agent session created when enabled
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/AgentSessionRequest"
+      responses:
+        '201':
+          description: Agent session created when enabled
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentSession"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/agent/sessions/{id}":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    get:
+      operationId: get_agent
+      summary: Agent session
+      responses:
+        '200':
+          description: Agent session
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentSession"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/agent/sessions/{id}/messages":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    get:
+      operationId: agent_messages
+      summary: Session messages
+      responses:
+        '200':
+          description: Session messages
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentMessages"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+    post:
+      operationId: agent_post_message
+      summary: Message stored without calling a model
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/AgentMessageRequest"
+      responses:
+        '202':
+          description: Message stored without calling a model
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentMessage"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+        '200':
+          description: The client message was already recorded
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentMessage"
+  "/agent/sessions/{id}/messages/{message_id}/remove":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    - name: message_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: agent_remove_message
+      summary: Unsent message removed
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Unsent message removed
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentMessage"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/agent/sessions/{id}/messages/{message_id}/resend":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    - name: message_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: agent_resend_message
+      summary: Unknown delivery explicitly resent
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/AgentResend"
+      responses:
+        '200':
+          description: Unknown delivery explicitly resent
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentMessage"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/agent/sessions/{id}/turns/{turn_id}/stop":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    - name: turn_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: agent_stop_turn
+      summary: Turn stopped, submitted jobs continue
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IdempotencyKey"
+      responses:
+        '200':
+          description: Turn stopped, submitted jobs continue
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentTurn"
+        '202':
+          description: Agent stop turn
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentTurn"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/agent/sessions/{id}/resume-pending":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: agent_resume_pending
+      summary: Agent resume pending
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '200':
+          description: Agent resume pending
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentSession"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/agent/sessions/{id}/archive":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: agent_archive
+      summary: Agent archive
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/OptionalRevision"
+      responses:
+        '200':
+          description: Agent archive
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentSession"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/agent/sessions/{id}/actions/{action_id}/approve":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    - name: action_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: agent_approve
+      summary: Agent approve
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ExpectedRevision"
+      responses:
+        '200':
+          description: Agent approve
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentAction"
+        '202':
+          description: Agent approve
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentAction"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/agent/sessions/{id}/actions/{action_id}/reject":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    - name: action_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    post:
+      operationId: agent_reject
+      summary: Agent reject
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      - "$ref": "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/ExpectedRevision"
+      responses:
+        '200':
+          description: Agent reject
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentAction"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/events":
+    get:
+      operationId: sse_events
+      summary: Server-sent events
+      parameters:
+      - "$ref": "#/components/parameters/LastEventID"
+      - name: after
+        in: query
+        required: false
+        schema:
+          type: integer
+      - name: snapshot
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - '1'
+      responses:
+        '200':
+          description: Server-sent events with JSON event data conforming to Event.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/EventSnapshot"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/health/live":
+    get:
+      operationId: live
+      servers:
+      - url: "/"
+      security: []
+      responses:
+        '200':
+          description: Service is live
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+  "/health/ready":
+    get:
+      operationId: ready
+      servers:
+      - url: "/"
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Health"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
+        '503':
+          description: Readiness check failed
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Health"
+  "/agent/sessions/{id}/dispatch":
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: agent_dispatch
+      summary: Start the next queued assistant message
+      parameters:
+      - "$ref": "#/components/parameters/XCSRFToken"
+      responses:
+        '202':
+          description: Assistant turn accepted
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AgentTurn"
+        default:
+          "$ref": "#/components/responses/GalleryProblem"
 components:
+  securitySchemes:
+    GallerySession:
+      type: apiKey
+      in: cookie
+      name: gallery_session
+  responses:
+    GalleryProblem:
+      description: Gallery error
+      content:
+        application/problem+json:
+          schema:
+            "$ref": "#/components/schemas/Problem"
   schemas:
     Problem:
       type: object
-      required: [type, title, status, detail, code, request_id, retryable]
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        code:
+          type: string
+        request_id:
+          type: string
+        retryable:
+          type: boolean
+        refresh:
+          type: boolean
+        retry_after_ms:
+          type: integer
+      required:
+      - type
+      - title
+      - status
+      - detail
+      - code
+      - request_id
+      - retryable
+    Initialized:
+      type: object
+      properties:
+        initialized:
+          type: boolean
+      required:
+      - initialized
+    SetupOwner:
+      type: object
+      properties:
+        bootstrap_token:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+      required:
+      - bootstrap_token
+      - password
+    Login:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+      required:
+      - username
+      - password
+    PasswordChange:
+      type: object
+      properties:
+        current_password:
+          type: string
+        new_password:
+          type: string
+        confirm_password:
+          type: string
+      required:
+      - current_password
+      - new_password
+    Actor:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        username:
+          type: string
+        role:
+          type: string
+          enum:
+          - owner
+          - collaborator
+        must_change_password:
+          type: boolean
+      required:
+      - id
+      - username
+      - role
+      - must_change_password
+    AnonymousSession:
+      type: object
+      properties:
+        actor:
+          type: 'null'
+      required:
+      - actor
+    AuthenticatedSession:
+      type: object
+      properties:
+        actor:
+          "$ref": "#/components/schemas/Actor"
+        capability_revision:
+          type: integer
+        expires_at:
+          type: string
+          format: date-time
+        csrf_token:
+          type: string
+        event_cursor:
+          type: integer
+      required:
+      - actor
+      - capability_revision
+      - expires_at
+      - csrf_token
+      - event_cursor
+    Session:
+      oneOf:
+      - "$ref": "#/components/schemas/AnonymousSession"
+      - "$ref": "#/components/schemas/AuthenticatedSession"
+    LocalAccount:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        username:
+          type: string
+        role:
+          type: string
+          enum:
+          - owner
+          - collaborator
+        active:
+          type: boolean
+        status:
+          type: string
+        revision:
+          type: integer
+        must_change_password:
+          type: boolean
+      required:
+      - id
+      - username
+      - revision
+    LocalAccounts:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/LocalAccount"
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - items
+    AccountPatch:
+      type: object
+      properties:
+        expected_revision:
+          type: integer
+        status:
+          type: string
+          enum:
+          - active
+          - disabled
+    PasswordReset:
+      type: object
+      properties:
+        password:
+          type: string
+        expected_revision:
+          type: integer
+      required:
+      - password
+    Limits:
+      type: object
+      properties:
+        max_upload_items:
+          type: integer
+        upload_concurrency_hint:
+          type: integer
+        max_download_selection:
+          type: integer
+        library_bytes:
+          type: integer
+        source:
+          type: string
+        writable:
+          type: boolean
+        staging_bytes:
+          type: integer
+        ai_daily_token_budget:
+          type: integer
+    Settings:
+      type: object
+      properties:
+        revision:
+          type: integer
+        limits:
+          "$ref": "#/components/schemas/Limits"
+        ai_enabled:
+          type: boolean
+        ai_daily_token_budget:
+          type: integer
+    SettingsPatch:
+      type: object
+      properties:
+        expected_revision:
+          type: integer
+        max_upload_items:
+          type: integer
+        upload_concurrency_hint:
+          type: integer
+        max_download_selection:
+          type: integer
+        ai_daily_token_budget:
+          type: integer
+    JobPause:
+      type: object
+      properties:
+        kind:
+          type: string
+        reason:
+          type: string
+      required:
+      - kind
+      - reason
+    StorageCapabilities:
+      type: object
+      properties:
+        range:
+          type: boolean
+        conditional_put:
+          type: boolean
+        checksum:
+          type: boolean
+        move_object:
+          type: boolean
+    Progress:
+      type: object
+      properties:
+        done:
+          type: integer
+        total:
+          type: integer
+      required:
+      - done
+      - total
     Job:
       type: object
-      required: [id, kind, state, status_url, progress]
       properties:
+        id:
+          type: string
+          minLength: 1
+        kind:
+          type: string
         state:
           type: string
-          enum: [queued, running, retry_wait, cancel_requested, succeeded, failed, canceled]
-    Session:
+          enum:
+          - queued
+          - running
+          - retry_wait
+          - cancel_requested
+          - succeeded
+          - failed
+          - canceled
+        status_url:
+          type: string
+        progress:
+          "$ref": "#/components/schemas/Progress"
+        failure:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - id
+      - kind
+      - state
+      - status_url
+      - progress
+    Jobs:
       type: object
       properties:
-        actor: { nullable: true }
-        csrf_token: { type: string }
-        event_cursor: { type: integer }
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Job"
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - items
+    JobSummary:
+      type: object
+      properties:
+        queued:
+          type: integer
+        running:
+          type: integer
+        pending:
+          type: integer
+        oldest_age_ms:
+          type: integer
+        execution_ms:
+          type: object
+        suppressed:
+          type: boolean
+        pauses:
+          type: array
+          items:
+            "$ref": "#/components/schemas/JobPause"
+        recent_failures:
+          type: array
+          items:
+            type: object
+    Accepted:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        job_id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+        status_url:
+          type: string
+    MaintenanceRun:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        kind:
+          type: string
+        resource_id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+        progress:
+          "$ref": "#/components/schemas/Progress"
+        detail_url:
+          type: string
+      required:
+      - kind
+      - state
+    AuditEvent:
+      type: object
+      properties:
+        id:
+          type: integer
+        kind:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        actor_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        scope:
+          type: string
+        resource_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        request_id:
+          type: string
+        payload:
+          type: object
+    AuditEvents:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/AuditEvent"
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - items
+    VariantStats:
+      type: object
+      properties:
+        publication_ratio:
+          type: number
+        backlog:
+          type: integer
+        missing_previews:
+          type: integer
+    Backup:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+        phase:
+          type: string
+        job_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        format_version:
+          type: integer
+        schema_version:
+          type: integer
+        snapshot_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        completed_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        catalog_revision:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        routing_epoch:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        verified_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        replica_verified_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        bytes_written:
+          type: integer
+        bytes_read_back:
+          type: integer
+        bytes_verified:
+          type: integer
+        status_url:
+          type: string
+      required:
+      - id
+      - state
+    BackupHealth:
+      type: object
+      properties:
+        snapshot_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        snapshot_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        snapshot_age_ms:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        rpo_ms:
+          type: integer
+        rpo_exceeded:
+          type: boolean
+        success_rate:
+          type: number
+        failures:
+          type: integer
+        pins_held:
+          type: integer
+        last_drill_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        free_bytes:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        alerts:
+          type: array
+          items:
+            type: string
+    Backups:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Backup"
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+        restore_gap:
+          "$ref": "#/components/schemas/RestoreGap"
+        health:
+          "$ref": "#/components/schemas/BackupHealth"
+      required:
+      - items
+    BackupPreview:
+      type: object
+      properties:
+        dry_run:
+          type: boolean
+        backup_repository_id:
+          type: string
+        bytes:
+          type: integer
+        images:
+          type: integer
+        free_bytes:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        capacity_ok:
+          type: boolean
+        freeze_ms:
+          type: integer
+      required:
+      - dry_run
+      - backup_repository_id
+      - bytes
+      - images
+      - free_bytes
+      - capacity_ok
+      - freeze_ms
+    BackupIssue:
+      type: object
+      properties:
+        code:
+          type: string
+        blob_id:
+          type: string
+          minLength: 1
+      required:
+      - code
+    BackupVerification:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        ok:
+          type: boolean
+        state:
+          type: string
+        verified_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        objects:
+          type: integer
+        objects_verified:
+          type: integer
+        exceptions:
+          type: array
+          items:
+            "$ref": "#/components/schemas/BackupIssue"
+      required:
+      - id
+      - ok
+      - state
+      - verified_at
+      - objects
+      - objects_verified
+      - exceptions
+    RestoreRequest:
+      type: object
+      properties:
+        backup_id:
+          type: string
+          minLength: 1
+        confirm_loss:
+          type: string
+        branch_id:
+          type: string
+        mode:
+          type: string
+          enum:
+          - preview
+          - dry_run
+          - execute
+      required:
+      - backup_id
+    RestoreGap:
+      type: object
+      properties:
+        backup_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        snapshot_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        gap_ms:
+          type: integer
+        unbacked_images:
+          type: integer
+        loss_sha:
+          anyOf:
+          - type: string
+          - type: 'null'
+        desired_at:
+          type: integer
+    Restore:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        backup_id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+        branch_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        snapshot_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        job_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        status_url:
+          type: string
+      required:
+      - id
+      - backup_id
+      - state
+    RestoreReport:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        restore_id:
+          type: string
+          minLength: 1
+        backup_id:
+          type: string
+          minLength: 1
+        snapshot_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        integrity:
+          type: string
+        catalog_ok:
+          type: boolean
+        originals:
+          type: integer
+        originals_verified:
+          type: integer
+        originals_missing:
+          type: array
+          items:
+            type: string
+        originals_mismatched:
+          type: array
+          items:
+            type: string
+        rto_ms:
+          type: integer
+        smoke:
+          type: object
+    RestorePromotion:
+      type: object
+      properties:
+        expected_revision:
+          type: integer
+        source_ack:
+          type: string
+      required:
+      - expected_revision
+      - source_ack
+    Promotion:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        backup_id:
+          type: string
+          minLength: 1
+        writes:
+          type: string
+          enum:
+          - open
+          - blocked
+        catalog_revision:
+          type: integer
+        routing_epoch:
+          type: integer
+        accepted_at:
+          type: integer
+      required:
+      - id
+      - backup_id
+      - writes
+      - catalog_revision
+      - routing_epoch
+      - accepted_at
+    LibraryEntry:
+      type: object
+      properties:
+        instance_id:
+          type: string
+          minLength: 1
+        accepted_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        mode:
+          type: string
+          enum:
+          - readonly
+          - open
+        reads:
+          type: string
+        writes:
+          type: string
+          enum:
+          - open
+          - blocked
+        frozen_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+      required:
+      - instance_id
+      - accepted_at
+      - mode
+      - reads
+      - writes
+      - frozen_at
+    SourceFreeze:
+      type: object
+      properties:
+        writes:
+          type: string
+        frozen_at:
+          type: integer
+        ack:
+          type: string
+      required:
+      - writes
+      - frozen_at
+      - ack
+    EarlySnapshot:
+      type: object
+      properties:
+        backup_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        snapshot_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        cutover_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        gap_ms:
+          type: integer
+        mode:
+          type: string
+        package_available:
+          type: boolean
+    ExpectedRevision:
+      type: object
+      properties:
+        expected_revision:
+          type: integer
+      required:
+      - expected_revision
+    OptionalRevision:
+      type: object
+      properties:
+        expected_revision:
+          type: integer
+    DegradeStorage:
+      type: object
+      properties:
+        blob_ids:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        backup_id:
+          type: string
+          minLength: 1
+      required:
+      - blob_ids
+      - backup_id
+    Cleanup:
+      type: object
+      properties:
+        kind:
+          type: string
+      required:
+      - kind
+    RetirementRequest:
+      type: object
+      properties:
+        dry_run:
+          type: boolean
+        expected_revision:
+          type: integer
+        preview_sha:
+          type: string
+    Retirement:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        dry_run:
+          type: boolean
+        stage:
+          type: string
+        revision:
+          type: integer
+        namespace:
+          type: string
+        object_count:
+          type: integer
+        active_reads:
+          type: integer
+        preview_sha:
+          type: string
+        blockers:
+          type: array
+          items:
+            type: string
+        backup_exceptions:
+          type: array
+          items:
+            type: string
+      required:
+      - id
+      - stage
+      - revision
+    LocalStorage:
+      type: object
+      properties:
+        kind:
+          const: local
+        root:
+          type: string
+        dry_run:
+          type: boolean
+      required:
+      - kind
+      - root
+    S3Storage:
+      type: object
+      properties:
+        kind:
+          const: s3
+        endpoint:
+          type: string
+        region:
+          type: string
+        bucket:
+          type: string
+        prefix:
+          type: string
+        access_key:
+          type: string
+        secret_key:
+          type: string
+        dry_run:
+          type: boolean
+      required:
+      - kind
+      - region
+      - bucket
+      - prefix
+    WebDavStorage:
+      type: object
+      properties:
+        kind:
+          const: web_dav
+        origin:
+          type: string
+        collection:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+        dry_run:
+          type: boolean
+      required:
+      - kind
+      - origin
+      - collection
+    StorageTarget:
+      oneOf:
+      - "$ref": "#/components/schemas/LocalStorage"
+      - "$ref": "#/components/schemas/S3Storage"
+      - "$ref": "#/components/schemas/WebDavStorage"
+    Migration:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        stage:
+          type: string
+        state:
+          type: string
+        revision:
+          type: integer
+        source_backend_id:
+          type: string
+          minLength: 1
+        target_backend_id:
+          type: string
+          minLength: 1
+        protected_until:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        direction:
+          type: string
+        route:
+          type: object
+        bytes:
+          type: object
+        progress:
+          type: object
+      required:
+      - id
+      - stage
+      - state
+      - revision
+    MigrationItem:
+      type: object
+      properties:
+        blob_id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+        attempt_no:
+          type: integer
+        last_error:
+          anyOf:
+          - type: string
+          - type: 'null'
+        verified_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        size:
+          type: integer
+      required:
+      - blob_id
+      - state
+      - attempt_no
+      - last_error
+      - verified_at
+      - size
+    MigrationItems:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/MigrationItem"
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - items
+    AlbumCapabilities:
+      type: object
+      properties:
+        browse:
+          type: boolean
+        edit:
+          type: boolean
+        upload:
+          type: boolean
+        view_original:
+          type: boolean
+        download:
+          type: boolean
+        archive_enabled:
+          type: boolean
+      required:
+      - browse
+      - edit
+      - upload
+      - view_original
+      - download
+      - archive_enabled
+    Album:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        name:
+          type: string
+        description:
+          type: string
+        cover_image_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        visibility:
+          type: string
+        archive_enabled:
+          type: boolean
+        revision:
+          type: integer
+        content_revision:
+          type: integer
+        acl_revision:
+          type: integer
+        capabilities:
+          "$ref": "#/components/schemas/AlbumCapabilities"
+        grants:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Grant"
+          description: Available to the library owner.
+      required:
+      - id
+      - name
+      - description
+      - cover_image_id
+      - visibility
+      - archive_enabled
+      - revision
+      - content_revision
+      - acl_revision
+      - capabilities
+    Albums:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Album"
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - items
+    AlbumCreate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+      required:
+      - name
+    AlbumPatch:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        cover_image_id:
+          type: string
+          minLength: 1
+        expected_revision:
+          type: integer
+    Grant:
+      type: object
+      properties:
+        actor_id:
+          type: string
+          minLength: 1
+        browse:
+          type: boolean
+        edit:
+          type: boolean
+        upload:
+          type: boolean
+        view_original:
+          type: boolean
+        download:
+          type: boolean
+      required:
+      - actor_id
+    AccessPatch:
+      type: object
+      properties:
+        visibility:
+          type: string
+        archive_enabled:
+          type: boolean
+        grants:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Grant"
+        expected_revision:
+          type: integer
+    Variant:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        spec_id:
+          type: string
+        width:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        height:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        profile_revision:
+          type: integer
+      required:
+      - id
+      - spec_id
+      - width
+      - height
+      - profile_revision
+    ImageListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        display_name:
+          type: string
+        width:
+          type: integer
+        height:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        variants:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Variant"
+      required:
+      - id
+      - display_name
+      - width
+      - height
+      - created_at
+      - variants
+    Images:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/ImageListItem"
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+        content_revision:
+          type: integer
+      required:
+      - items
+    Image:
+      type: object
+      properties:
+        id:
+          type: string
+        display_name:
+          type: string
+        width:
+          type: integer
+        height:
+          type: integer
+        variants:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Variant"
+        selection:
+          type: object
+          properties:
+            thumb:
+              anyOf:
+              - "$ref": "#/components/schemas/VariantCandidate"
+              - type: 'null'
+            mobile:
+              anyOf:
+              - "$ref": "#/components/schemas/VariantCandidate"
+              - type: 'null'
+            tablet:
+              anyOf:
+              - "$ref": "#/components/schemas/VariantCandidate"
+              - type: 'null'
+            desktop:
+              anyOf:
+              - "$ref": "#/components/schemas/VariantCandidate"
+              - type: 'null'
+          required:
+          - thumb
+          - mobile
+          - tablet
+          - desktop
+        srcset:
+          type: array
+          items:
+            "$ref": "#/components/schemas/SrcsetCandidate"
+        placeholder:
+          type: boolean
+        revision:
+          type: integer
+        lifecycle_revision:
+          type: integer
+      required:
+      - id
+      - display_name
+      - width
+      - height
+      - variants
+      - selection
+      - srcset
+      - placeholder
+      - revision
+      - lifecycle_revision
+    AlbumItems:
+      type: object
+      properties:
+        image_ids:
+          type: array
+          items:
+            type: string
+            minLength: 1
+        expected_revision:
+          type: integer
+        target_album_id:
+          type: string
+          minLength: 1
+        target_expected_revision:
+          type: integer
+        before_id:
+          type: string
+          minLength: 1
+        after_id:
+          type: string
+          minLength: 1
+        image_id:
+          type: string
+          minLength: 1
+    RenameImage:
+      type: object
+      properties:
+        image_id:
+          type: string
+          minLength: 1
+        display_name:
+          type: string
+        expected_revision:
+          type: integer
+      required:
+      - image_id
+      - display_name
+    AlbumMutation:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        revision:
+          type: integer
+        content_revision:
+          type: integer
+        target_revision:
+          type: integer
+        image_id:
+          type: string
+          minLength: 1
+        items:
+          type: array
+          items:
+            type: object
+    UploadItemRequest:
+      type: object
+      properties:
+        client_item_id:
+          type: string
+          minLength: 1
+        name:
+          type: string
+        size:
+          type: integer
+      required:
+      - client_item_id
+      - name
+      - size
+    UploadRequest:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/UploadItemRequest"
+      required:
+      - items
+    UploadItemMapping:
+      type: object
+      properties:
+        client_item_id:
+          type: string
+          minLength: 1
+        upload_item_id:
+          type: string
+          minLength: 1
+      required:
+      - client_item_id
+      - upload_item_id
+    UploadAccepted:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/UploadItemMapping"
+      required:
+      - id
+      - items
+    UploadCommitted:
+      type: object
+      properties:
+        image_id:
+          type: string
+          minLength: 1
+        original_state:
+          type: string
+        job_ids:
+          type: array
+          items:
+            type: string
+            minLength: 1
+      required:
+      - image_id
+      - original_state
+      - job_ids
+    UploadItem:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        upload_item_id:
+          type: string
+          minLength: 1
+        client_item_id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+        name:
+          type: string
+        size:
+          type: integer
+        image_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        failure_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - state
+    Upload:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        album_id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/UploadItem"
+      required:
+      - id
+      - state
+    Uploads:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Upload"
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - items
+    DownloadClaim:
+      type: object
+      properties:
+        image_id:
+          type: string
+          minLength: 1
+        ok:
+          type: boolean
+        claim_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        body_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+        code:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - image_id
+      - ok
+      - claim_id
+      - body_url
+      - code
+    SelectedDownloads:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/DownloadClaim"
+      required:
+      - items
+    Archive:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+        job_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        status_url:
+          type: string
+        body_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+        revision:
+          type: integer
+        album_id:
+          type: string
+      required:
+      - id
+      - state
+    Archives:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Archive"
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - items
+    Capabilities:
+      type: object
+      properties:
+        read:
+          type: array
+          items:
+            type: string
+        write:
+          type: array
+          items:
+            type: string
+        animation:
+          type: boolean
+        multipage:
+          type: boolean
+        lossy:
+          type: array
+          items:
+            type: string
+        max_upload_items:
+          type: integer
+        upload_concurrency_hint:
+          type: integer
+        max_download_selection:
+          type: integer
+        ai_enabled:
+          type: boolean
+      required:
+      - read
+      - write
+      - animation
+      - multipage
+      - lossy
+      - max_upload_items
+      - upload_concurrency_hint
+      - max_download_selection
+      - ai_enabled
+    VariantSpec:
+      type: object
+      properties:
+        spec_id:
+          type: string
+        fit:
+          type: string
+        width:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        height:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        long_edge:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        format:
+          type: string
+        png_compression:
+          type: string
+      required:
+      - spec_id
+      - fit
+      - format
+      - png_compression
+    VariantProfile:
+      type: object
+      properties:
+        revision:
+          type: integer
+        specs:
+          type: array
+          items:
+            "$ref": "#/components/schemas/VariantSpec"
+        job_ids:
+          type: array
+          items:
+            type: string
+            minLength: 1
+      required:
+      - revision
+    ConversionRequest:
+      type: object
+      properties:
+        image_id:
+          type: string
+          minLength: 1
+        spec:
+          "$ref": "#/components/schemas/VariantSpec"
+      required:
+      - image_id
+      - spec
+    Conversion:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+        job_id:
+          type: string
+          minLength: 1
+        status_url:
+          type: string
+        output_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+        output_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+        expires_at:
+          anyOf:
+          - type: integer
+          - type: 'null'
+      required:
+      - id
+      - state
+    CaptionPatch:
+      type: object
+      properties:
+        text:
+          type: string
+        expected_revision:
+          type: integer
+      required:
+      - text
+    Caption:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        image_id:
+          type: string
+          minLength: 1
+        text:
+          type: string
+        revision:
+          type: integer
+    LifecycleChange:
+      type: object
+      properties:
+        expected_lifecycle_revision:
+          type: integer
+      required:
+      - expected_lifecycle_revision
+    Lifecycle:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        image_id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+        lifecycle_revision:
+          type: integer
+        job_id:
+          type: string
+          minLength: 1
+      required:
+      - state
+    Trash:
+      type: object
+      properties:
+        images:
+          type: array
+          items:
+            type: object
+        albums:
+          type: array
+          items:
+            type: object
+        items:
+          type: array
+          items:
+            type: object
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+    SearchHit:
+      type: object
+      properties:
+        kind:
+          type: string
+        id:
+          type: string
+          minLength: 1
+        name:
+          type: string
+        display_name:
+          type: string
+        album_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - kind
+      - id
+    SearchResults:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/SearchHit"
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - items
+    ScanScope:
+      type: object
+      properties:
+        kind:
+          type: string
+        album_id:
+          type: string
+          minLength: 1
+        image_ids:
+          type: array
+          items:
+            type: string
+            minLength: 1
+    ScanRequest:
+      type: object
+      properties:
+        scope:
+          "$ref": "#/components/schemas/ScanScope"
+      required:
+      - scope
+    Scan:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+        status_url:
+          type: string
+        processed:
+          type: integer
+        total:
+          type: integer
+        failed:
+          type: integer
+      required:
+      - id
+      - state
+    AgentScope:
+      type: object
+      properties:
+        kind:
+          type: string
+        album_id:
+          type: string
+          minLength: 1
+        image_ids:
+          type: array
+          items:
+            type: string
+            minLength: 1
+    AgentSessionRequest:
+      type: object
+      properties:
+        scope:
+          "$ref": "#/components/schemas/AgentScope"
+    AgentSession:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+        scope:
+          "$ref": "#/components/schemas/AgentScope"
+        revision:
+          type: integer
+        active_turn_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        turn_id:
+          type:
+          - string
+          - 'null'
+        turn_state:
+          type:
+          - string
+          - 'null'
+      required:
+      - id
+    AgentSessions:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/AgentSession"
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - items
+    AgentMessageRequest:
+      type: object
+      properties:
+        client_message_id:
+          type: string
+          minLength: 1
+        text:
+          type: string
+        mode:
+          type: string
+        expected_turn_id:
+          type: string
+          minLength: 1
+      required:
+      - client_message_id
+      - text
+    AgentResend:
+      type: object
+      properties:
+        client_message_id:
+          type: string
+          minLength: 1
+      required:
+      - client_message_id
+    AgentMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        message_id:
+          type: string
+          minLength: 1
+        client_message_id:
+          type: string
+          minLength: 1
+        seq:
+          type: integer
+        delivery_state:
+          type: string
+        body:
+          type: string
+        state:
+          type: string
+        turn_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+    AgentMessages:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/AgentMessage"
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - items
+    AgentTurn:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        turn_id:
+          type: string
+          minLength: 1
+        session_id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+      required:
+      - state
+    AgentAction:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        action_id:
+          type: string
+          minLength: 1
+        state:
+          type: string
+        revision:
+          type: integer
+        job_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+      required:
+      - state
+    Health:
+      type: object
+      required:
+      - status
+      - sqlite
+      - media
+      - maintenance
+      properties:
+        status:
+          enum:
+          - ok
+          - unavailable
+        sqlite:
+          type: string
+        media:
+          type: string
+        maintenance:
+          type: boolean
+    Event:
+      type: object
+      properties:
+        id:
+          type: integer
+        type:
+          type: string
+        scope_kind:
+          type: string
+        scope_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        resource_id:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+        payload:
+          type: object
+        occurred_at:
+          type: string
+          format: date-time
+    EventSnapshot:
+      type: object
+      required:
+      - event_cursor
+      - stale
+      - events
+      properties:
+        event_cursor:
+          type: integer
+        stale:
+          type: boolean
+        events:
+          type: array
+          items:
+            "$ref": "#/components/schemas/Event"
+    LibraryImageItem:
+      type: object
+      properties:
+        id:
+          type: string
+          minLength: 1
+        display_name:
+          type: string
+        width:
+          type: integer
+        height:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - display_name
+      - width
+      - height
+      - created_at
+    LibraryImages:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/LibraryImageItem"
+        next_cursor:
+          anyOf:
+          - type: string
+          - type: 'null'
+      required:
+      - items
+      - next_cursor
+    ImageCaption:
+      type: object
+      properties:
+        source:
+          type: string
+          enum:
+          - human
+          - model
+        text:
+          type: string
+      required:
+      - source
+      - text
+    VariantCandidate:
+      type: object
+      properties:
+        variant_id:
+          type: string
+        spec_id:
+          type: string
+        fallback:
+          type: boolean
+      required:
+      - variant_id
+      - spec_id
+      - fallback
+    SrcsetCandidate:
+      type: object
+      properties:
+        variant_id:
+          type: string
+        spec_id:
+          type: string
+        width:
+          anyOf:
+          - type: integer
+          - type: 'null'
+        height:
+          anyOf:
+          - type: integer
+          - type: 'null'
+      required:
+      - variant_id
+      - spec_id
+      - width
+      - height
+    AlbumImage:
+      allOf:
+      - "$ref": "#/components/schemas/Image"
+      - type: object
+        properties:
+          created_at:
+            type: string
+            format: date-time
+          previous_image_id:
+            anyOf:
+            - type: string
+            - type: 'null'
+          next_image_id:
+            anyOf:
+            - type: string
+            - type: 'null'
+          content_revision:
+            type: integer
+          can_inline_original:
+            type: boolean
+          caption:
+            "$ref": "#/components/schemas/ImageCaption"
+        required:
+        - created_at
+        - previous_image_id
+        - next_image_id
+        - content_revision
+        - can_inline_original
+  parameters:
+    XCSRFToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema:
+        type: string
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      schema:
+        type: string
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema:
+        type: string
+    Range:
+      name: Range
+      in: header
+      required: false
+      schema:
+        type: string
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      schema:
+        type: string
+    IfRange:
+      name: If-Range
+      in: header
+      required: false
+      schema:
+        type: string
+    LastEventID:
+      name: Last-Event-ID
+      in: header
+      required: false
+      schema:
+        type: string
+security:
+- GallerySession: []

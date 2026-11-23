@@ -217,6 +217,17 @@ impl MediaBackend for WebDavBackend {
             .to_vec())
     }
 
+    async fn stream(&self, key: &str) -> Result<super::ObjectStream> {
+        use futures_util::TryStreamExt;
+        let response = self.apply_auth(self.client.get(self.object_url(key)?)).send().await?;
+        if response.status() == StatusCode::NOT_FOUND {
+            anyhow::bail!("storage missing");
+        }
+        anyhow::ensure!(response.status() == StatusCode::OK,
+            "storage unavailable: webdav get {}", response.status());
+        Ok(Box::pin(response.bytes_stream().map_err(anyhow::Error::from)))
+    }
+
     async fn delete(&self, key: &str) -> Result<()> {
         let url = self.object_url(key)?;
         let res = self.apply_auth(self.client.delete(url)).send().await?;

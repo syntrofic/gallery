@@ -1,0 +1,25 @@
+{
+  "name": "gallery-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/unpack-ui.mjs && vite",
+    "build": "node scripts/unpack-ui.mjs && vue-tsc --noEmit && vite build",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "vue": "3.5.45",
+    "vue-router": "4.6.4",
+    "lucide-vue-next": "0.577.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "@vitejs/plugin-vue": "6.0.11",
+    "typescript": "5.9.3",
+    "vite": "8.3.8",
+    "vue-tsc": "3.3.14",
+    "@types/node": "26.6.6"
+  },
+  "packageManager": "pnpm@11.25.0"
+}

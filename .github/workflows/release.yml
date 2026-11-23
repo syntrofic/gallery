@@ -1,0 +1,55 @@
+name: Build Gallery release images
+on:
+  push:
+    tags:
+      - 'v*'
+permissions:
+  contents: write
+
+jobs:
+  image:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            architecture: amd64
+          - runner: ubuntu-24.04-arm
+            architecture: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: gallery:${{ github.ref_name }}
+          platforms: linux/${{ matrix.architecture }}
+          outputs: type=docker,dest=/tmp/gallery-image.tar
+          cache-from: type=gha,scope=gallery-${{ matrix.architecture }}
+          cache-to: type=gha,scope=gallery-${{ matrix.architecture }},mode=max
+      - name: Serve Gallery with its frontend
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          docker load --input /tmp/gallery-image.tar
+          container=$(docker run -d --read-only --tmpfs /tmp -p 127.0.0.1:48143:8080 \
+            -e GALLERY_LISTEN_ADDR=0.0.0.0:8080 -e GALLERY_DATA_DIR=/tmp/gallery "gallery:$TAG")
+          trap 'docker logs "$container"; docker rm -f "$container"' EXIT
+          curl --fail --retry 20 --retry-connrefused --retry-delay 1 http://127.0.0.1:48143/health/ready
+          curl --fail http://127.0.0.1:48143/albums -o /tmp/gallery-index.html
+          asset=$(grep -oE '/assets/[^"]+\.js' /tmp/gallery-index.html | head -1)
+          test -n "$asset"
+          curl --fail "http://127.0.0.1:48143$asset" -o /dev/null
+      - name: Attach the self-hosted Docker image
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          ARCH: ${{ matrix.architecture }}
+        run: |
+          file="gallery-$TAG-linux-$ARCH.docker.tar.gz"
+          gzip -c /tmp/gallery-image.tar > "$file"
+          sha256sum "$file" > "$file.sha256"
+          gh release upload "$TAG" "$file" "$file.sha256"

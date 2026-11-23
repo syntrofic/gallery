@@ -732,11 +732,10 @@ pub async fn cutover(state: &AppState, actor: &Actor, id: &str, expected: i64) -
         let target = crate::storage::open_by_id(&state.pool, &row.1)
             .await
             .map_err(anyhow::Error::from)?;
-        let (key, _, _, _) = crate::storage::location_for(&state.pool, &blob_id, &row.1)
+        let (key, size, _, _) = crate::storage::location_for(&state.pool, &blob_id, &row.1)
             .await
             .map_err(anyhow::Error::from)?;
-        let bytes = target.get_bytes(&key).await.map_err(anyhow::Error::from)?;
-        if crate::storage::sha_of(&bytes) != sha {
+        if !target.hash_object(&key, size).await.is_ok_and(|(digest, _)| digest == sha) {
             return Err(AppError::conflict("CHECKSUM_MISMATCH", "target object hash mismatch"));
         }
     }
@@ -863,10 +862,10 @@ async fn smoke_target(pool: &SqlitePool, migration_id: &str, target_id: &str) ->
         if located_sha != sha {
             return Err(AppError::conflict("CHECKSUM_MISMATCH", "target object hash mismatch"));
         }
-        let bytes = target.get_bytes(&key).await.map_err(|_| {
+        let (digest, first) = target.hash_object(&key, size).await.map_err(|_| {
             AppError::conflict("CHECKSUM_MISMATCH", "target object hash mismatch")
         })?;
-        if crate::storage::sha_of(&bytes) != sha || bytes.len() as i64 != size {
+        if digest != sha {
             return Err(AppError::conflict("CHECKSUM_MISMATCH", "target object hash mismatch"));
         }
         let caps = target.backend().probe().await.map_err(|_| {
@@ -877,7 +876,7 @@ async fn smoke_target(pool: &SqlitePool, migration_id: &str, target_id: &str) ->
                 "target smoke probe failed",
             )
         })?;
-        if caps.range && !bytes.is_empty() {
+        if let Some(first) = first.filter(|_| caps.range) {
             let ranged = target.backend().open(&key, Some((0, 0))).await.map_err(|_| {
                 AppError::new(
                     axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -886,7 +885,7 @@ async fn smoke_target(pool: &SqlitePool, migration_id: &str, target_id: &str) ->
                     "target range smoke failed",
                 )
             })?;
-            if ranged.as_slice() != &bytes[..1] {
+            if ranged.as_slice() != [first] {
                 return Err(AppError::conflict("CHECKSUM_MISMATCH", "target range smoke mismatch"));
             }
         }
@@ -1197,7 +1196,7 @@ pub async fn rollback(state: &AppState, actor: &Actor, id: &str) -> AppResult<se
             continue;
         }
         let restored = plaintext_from_backup(state, &blob_id, &current.2).await?;
-        let Some(bytes) = restored else {
+        let Some(file) = restored else {
             let (kind,): (String,) = sqlx::query_as("SELECT kind FROM media_blobs WHERE id = ?")
                 .bind(&blob_id)
                 .fetch_one(&state.pool)
@@ -1214,7 +1213,7 @@ pub async fn rollback(state: &AppState, actor: &Actor, id: &str) -> AppResult<se
             continue;
         };
         source
-            .put_bytes(&current.0, &bytes, &current.3)
+            .backend().put_file(&current.0, file.path(), &current.3)
             .await
             .map_err(anyhow::Error::from)?;
         let now = db::now_ms();
@@ -1226,7 +1225,7 @@ pub async fn rollback(state: &AppState, actor: &Actor, id: &str) -> AppResult<se
         .bind(&blob_id)
         .bind(&row.0)
         .bind(&current.0)
-        .bind(bytes.len() as i64)
+        .bind(current.1)
         .bind(&current.2)
         .bind(now)
         .execute(&state.pool)
@@ -1463,8 +1462,8 @@ async fn missing_originals(
             continue;
         }
         let on_target = match crate::storage::location_for(&state.pool, &blob_id, target_id).await {
-            Ok((key, _, located_sha, _)) => match target.get_bytes(&key).await {
-                Ok(bytes) => crate::storage::sha_of(&bytes) == located_sha && located_sha == sha,
+            Ok((key, size, located_sha, _)) => match target.hash_object(&key, size).await {
+                Ok((digest, _)) => digest == located_sha && located_sha == sha,
                 Err(_) => false,
             },
             Err(_) => false,
@@ -1571,40 +1570,37 @@ async fn plaintext_from_backup(
     state: &AppState,
     blob_id: &str,
     sha: &str,
-) -> AppResult<Option<Vec<u8>>> {
-    let found: Option<(String, String)> = sqlx::query_as(
-        "SELECT i.backup_id, i.ciphertext_sha256 FROM backup_items i
+) -> AppResult<Option<tempfile::NamedTempFile>> {
+    let found: Vec<(String, String, i64, i64)> = sqlx::query_as(
+        "SELECT i.backup_id, i.ciphertext_sha256, i.size, r.format_version FROM backup_items i
          JOIN backup_runs r ON r.id = i.backup_id
          WHERE i.blob_id = ? AND i.plaintext_sha256 = ? AND i.state = 'verified'
            AND r.state = 'succeeded' AND i.ciphertext_sha256 IS NOT NULL
-         ORDER BY r.snapshot_at DESC LIMIT 1",
-    )
-    .bind(blob_id)
-    .bind(sha)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(anyhow::Error::from)?;
-    let Some((backup_id, ciphertext_sha)) = found else {
-        return Ok(None);
-    };
-    let path = state
-        .config
-        .backup_root()
-        .join(&backup_id)
-        .join(crate::ids::sha256_hex(blob_id.as_bytes()));
-    let Ok(ciphertext) = std::fs::read(&path) else {
-        return Ok(None);
-    };
-    if crate::ids::sha256_hex(&ciphertext) != ciphertext_sha {
-        return Ok(None);
+         ORDER BY r.snapshot_at DESC",
+    ).bind(blob_id).bind(sha).fetch_all(&state.pool).await.map_err(anyhow::Error::from)?;
+    let keys = state.config.keys_root();
+    let object = crate::ids::sha256_hex(blob_id.as_bytes());
+    for (backup_id, ciphertext_sha, size, version) in found {
+        let dir = state.config.backup_root().join(&backup_id);
+        if version >= crate::backup_package::FORMAT {
+            let Ok((_, manifest)) = crate::backup_package::read_committed(&keys, &dir, &backup_id) else {
+                continue;
+            };
+            if !crate::backup_package::items(&manifest)?.iter().any(|item| {
+                item["object"] == object && item["ciphertext_sha256"] == ciphertext_sha
+                    && item["size"] == size && item["sha256"] == sha
+            }) {
+                continue;
+            }
+        }
+        let output = tempfile::NamedTempFile::new_in(state.config.work_root()).map_err(anyhow::Error::from)?;
+        if crate::backup_package::decrypt_file(&keys, &dir.join(&object), output.path(),
+            Some(&ciphertext_sha), Some((size, sha))).is_ok()
+        {
+            return Ok(Some(output));
+        }
     }
-    let Ok(plain) = crate::backup::age_decrypt_bytes(&state.config.keys_root(), &ciphertext) else {
-        return Ok(None);
-    };
-    if crate::storage::sha_of(&plain) != sha {
-        return Ok(None);
-    }
-    Ok(Some(plain))
+    Ok(None)
 }
 
 async fn source_inventory_matches(pool: &SqlitePool, migration_id: &str, source_id: &str) -> AppResult<bool> {
@@ -1737,7 +1733,7 @@ pub async fn retire(
 ) -> AppResult<serde_json::Value> {
     crate::auth::require_owner(actor)?;
     let row = load_retire_row(&state.pool, id).await?;
-    let preview = retire_preview(&state.pool, id, &row, &state.config.backup_root()).await?;
+    let preview = retire_preview(state, id, &row).await?;
     if dry_run || row.stage == "retired" {
         return Ok(preview);
     }
@@ -1988,11 +1984,12 @@ async fn backup_repository_inside_backend(
 }
 
 async fn retire_preview(
-    pool: &SqlitePool,
+    state: &AppState,
     id: &str,
     row: &RetireRow,
-    backup_root: &std::path::Path,
 ) -> AppResult<serde_json::Value> {
+    let pool = &state.pool;
+    let backup_root = state.config.backup_root();
     let (object_count,): (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM storage_migration_items WHERE migration_id = ? AND state = 'verified'",
     )
@@ -2043,17 +2040,29 @@ async fn retire_preview(
         if unavailable > 0 {
             blockers.push("backup unavailable");
         }
-        let (drills,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM restore_runs WHERE state = 'succeeded' AND created_at >= ?",
+        let (requires_replica, drills): (i64, i64) = sqlx::query_as(
+            "SELECT
+                EXISTS(SELECT 1 FROM backup_runs WHERE state = 'succeeded' AND format_version >= 2 AND snapshot_at >= ?),
+                EXISTS(SELECT 1 FROM backup_drills d
+                    JOIN backup_runs b ON b.id = d.backup_id AND b.state = 'succeeded'
+                    WHERE d.slot = 'cutover:' || ? AND d.completed_at >= ?)
+                OR EXISTS(SELECT 1 FROM restore_runs r JOIN backup_runs b ON b.id = r.backup_id
+                    WHERE r.state = 'succeeded' AND r.created_at >= ? AND b.snapshot_at >= ?)",
         )
-        .bind(cutover_at)
-        .fetch_one(pool)
-        .await
-        .map_err(anyhow::Error::from)?;
-        if drills == 0 {
+        .bind(cutover_at).bind(id).bind(cutover_at)
+        .bind(cutover_at).bind(cutover_at)
+        .fetch_one(pool).await.map_err(anyhow::Error::from)?;
+        if requires_replica != 0 && !crate::backup_maintenance::verified_replica_since(state, cutover_at).await.unwrap_or(false) {
+            blockers.push("verified independent backup replica");
+        }
+        // Older records did not tie the operator's drill to a particular backup.
+        let legacy_drill = requires_replica == 0 && sqlx::query_scalar::<_, i64>(
+            "SELECT EXISTS(SELECT 1 FROM restore_runs WHERE state = 'succeeded' AND created_at >= ?)",
+        ).bind(cutover_at).fetch_one(pool).await.map_err(anyhow::Error::from)? != 0;
+        if drills == 0 && !legacy_drill {
             blockers.push("restore drill");
         }
-        if backup_repository_inside_backend(pool, &row.source_backend_id, backup_root).await? {
+        if backup_repository_inside_backend(pool, &row.source_backend_id, &backup_root).await? {
             blockers.push("backup on retired backend");
         }
     } else if row.stage != "retired" {

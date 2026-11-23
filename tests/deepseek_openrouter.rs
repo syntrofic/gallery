@@ -9,32 +9,14 @@ async fn openrouter_deepseek_answers() {
         .to_string();
     assert!(key.starts_with("sk-or-"), "openrouter key format");
     let client = reqwest::Client::new();
-    let models: Value = client
-        .get("https://openrouter.ai/api/v1/models")
-        .bearer_auth(&key)
-        .send()
-        .await
-        .expect("list models")
-        .error_for_status()
-        .expect("models status")
-        .json()
-        .await
-        .expect("models json");
-    let model = models["data"]
-        .as_array()
-        .expect("models")
-        .iter()
-        .filter_map(|m| m["id"].as_str())
-        .find(|id| id.to_ascii_lowercase().contains("deepseek"))
-        .expect("a deepseek model")
-        .to_string();
     let reply: Value = client
         .post("https://openrouter.ai/api/v1/chat/completions")
         .bearer_auth(&key)
         .json(&serde_json::json!({
-            "model": model,
+            "model": "deepseek/deepseek-v4.1-flash",
             "messages": [{"role": "user", "content": "Reply with the single word pong."}],
-            "max_tokens": 16
+            "max_tokens": 64,
+            "reasoning": {"enabled": false}
         }))
         .send()
         .await

@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 #[derive(Clone, Debug)]
 pub struct Config {
     pub listen: SocketAddr,
+    pub web_root: Option<PathBuf>,
     pub data_dir: PathBuf,
     pub public_url: String,
     pub admin_username: String,
@@ -14,6 +15,8 @@ pub struct Config {
     pub admin_password_revision: Option<String>,
     pub ai_enabled: bool,
     pub daily_backup: bool,
+    pub restore_drills: bool,
+    pub backup_replica: Option<PathBuf>,
     pub worker_bin: PathBuf,
     pub image_id: Option<String>,
 }
@@ -31,6 +34,7 @@ impl Config {
         let admin_password_file = nonempty_env("GALLERY_ADMIN_PASSWORD_FILE").map(PathBuf::from);
         Ok(Self {
             listen,
+            web_root: nonempty_env("GALLERY_WEB_ROOT").map(PathBuf::from),
             data_dir,
             public_url: std::env::var("GALLERY_PUBLIC_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:8080".into()),
@@ -41,6 +45,8 @@ impl Config {
             admin_password_revision: nonempty_env("GALLERY_ADMIN_PASSWORD_REVISION"),
             ai_enabled: std::env::var("GALLERY_AI_ENABLED").ok().as_deref() == Some("1"),
             daily_backup: std::env::var("GALLERY_DAILY_BACKUP").ok().as_deref() == Some("1"),
+            restore_drills: std::env::var("GALLERY_RESTORE_DRILLS").ok().as_deref() == Some("1"),
+            backup_replica: nonempty_env("GALLERY_BACKUP_REPLICA_DIR").map(PathBuf::from),
             worker_bin: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("gallery")),
             image_id: nonempty_env("GALLERY_IMAGE_ID"),
         })

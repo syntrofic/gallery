@@ -14,6 +14,33 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Serve,
+    /// Recover a standalone data directory from a signed backup package.
+    Recover {
+        #[arg(long)]
+        repository: std::path::PathBuf,
+        #[arg(long)]
+        backup_id: String,
+        #[arg(long)]
+        keys_dir: std::path::PathBuf,
+    },
+    /// Open writes on a verified, isolated offline recovery.
+    AcceptRecovery {
+        #[arg(long)]
+        source_ack: Option<String>,
+    },
+    /// Switch a standalone Gallery upstream after a verified host handoff.
+    Handoff {
+        #[arg(long)]
+        source: String,
+        #[arg(long)]
+        target: String,
+        #[arg(long)]
+        source_ack: String,
+        #[arg(long, default_value = "http://127.0.0.1:2019")]
+        caddy_admin: String,
+        #[arg(long)]
+        config_path: String,
+    },
     #[command(name = "codec-worker")]
     CodecWorker,
     Healthcheck {
@@ -81,11 +108,37 @@ async fn main() -> Result<()> {
         Command::Maintenance { command } => maintenance_cmd(command).await,
         Command::Mcp => gallery::mcp::proxy_stdio().await,
         Command::Serve => serve().await,
+        Command::Recover { repository, backup_id, keys_dir } => {
+            let report = gallery::recovery::recover(&Config::from_env()?, &repository, &backup_id, &keys_dir).await?;
+            println!("{}", serde_json::to_string(&report)?);
+            Ok(())
+        }
+        Command::AcceptRecovery { source_ack } => {
+            let report = gallery::recovery::accept(&Config::from_env()?, source_ack.as_deref()).await?;
+            println!("{}", serde_json::to_string(&report)?);
+            Ok(())
+        }
+        Command::Handoff { source, target, source_ack, caddy_admin, config_path } => {
+            let report = gallery::handoff::switch_caddy(
+                &Config::from_env()?, &source, &target, &source_ack, &caddy_admin, &config_path,
+            ).await?;
+            println!("{}", serde_json::to_string(&report)?);
+            Ok(())
+        }
     }
 }
 
 async fn serve() -> Result<()> {
-    let config = Config::from_env()?;
+    let mut config = Config::from_env()?;
+    if config.web_root.is_none() {
+        let development = std::path::PathBuf::from("frontend/dist");
+        if development.join("index.html").is_file() {
+            config.web_root = Some(development);
+        }
+    }
+    if let Some(root) = &config.web_root {
+        anyhow::ensure!(root.join("index.html").is_file(), "Gallery frontend index is missing");
+    }
     let lock_path = gallery::app::lock_path(&config);
     std::fs::create_dir_all(lock_path.parent().unwrap())?;
     let lock_file = std::fs::OpenOptions::new()
