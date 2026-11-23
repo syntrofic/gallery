@@ -3,8 +3,16 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Gallery release tag to build
+        required: true
+        type: string
 permissions:
   contents: write
+concurrency:
+  group: gallery-release-${{ inputs.tag || github.ref_name }}
 
 jobs:
   image:
@@ -19,11 +27,13 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
           context: .
-          tags: gallery:${{ github.ref_name }}
+          tags: gallery:${{ inputs.tag || github.ref_name }}
           platforms: linux/${{ matrix.architecture }}
           outputs: type=docker,dest=/tmp/gallery-image.tar
           cache-from: type=gha,scope=gallery-${{ matrix.architecture }}
@@ -31,7 +41,7 @@ jobs:
       - name: Serve Gallery with its frontend
         shell: bash
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           docker load --input /tmp/gallery-image.tar
           container=$(docker run -d --read-only --tmpfs /tmp -p 127.0.0.1:48143:8080 \
@@ -46,7 +56,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
           ARCH: ${{ matrix.architecture }}
         run: |
           file="gallery-$TAG-linux-$ARCH.docker.tar.gz"
