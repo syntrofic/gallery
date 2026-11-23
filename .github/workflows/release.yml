@@ -54,6 +54,12 @@ jobs:
           asset=$(grep -oE '/assets/[^"]+\.js' /tmp/gallery-index.html | head -1)
           test -n "$asset"
           curl --fail "http://127.0.0.1:48143$asset" -o /dev/null
+          echo 'iVBORw0KGgoAAAANSUhEUgAAACAAAAAYCAIAAAAUMWhjAAAAbElEQVR4nLXCERvCAABF0YfDMByGYTgMh2HwIBwOw2EYhuEwur+tX3HPd5LiHoo6h6LOsagzFnVORZ1zUedS1JmKOteizlzUuRV17kWdR1FnKeqsRZ1nUWcr6ryKOu+izqeo8y3q7EWdX1H/AfTSej16KIgMAAAAAElFTkSuQmCC' | base64 -d |
+            docker exec -i "$container" sh -c 'cat > /tmp/gallery-smoke.png'
+          docker exec -e RUST_LOG=gallery=info -i "$container" gallery codec-worker > /tmp/gallery-codec.json <<'JSON'
+          {"plan_id":"release-smoke","ops":[{"input_path":"/tmp/gallery-smoke.png","output_path":"/tmp/gallery-smoke.jpg","spec_id":"smoke","format":"jpeg","long_edge":16,"fit":"inside"}]}
+          JSON
+          jq -e 'length == 1 and .[0].mime == "image/jpeg" and .[0].width == 16' /tmp/gallery-codec.json
       - name: Attach the self-hosted Docker image
         shell: bash
         env:
