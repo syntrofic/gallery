@@ -135,7 +135,7 @@ onUnmounted(() => { window.removeEventListener('keydown', onKey); loader?.abort(
         <SButton v-if="canView && photo.can_inline_original" variant="secondary" :aria-pressed="original" @click="original = !original">
           <Scan :size="16" aria-hidden="true" />{{ original ? '返回预览' : '查看原图' }}
         </SButton>
-        <a v-if="canDownload" :href="`/api/v1${base}/original-download`" class="inline-action"><ArrowDownToLine :size="17" aria-hidden="true" />下载原图</a>
+        <a v-if="canDownload" :href="`/api/v1${base}/original-download`" download class="inline-action"><ArrowDownToLine :size="17" aria-hidden="true" />下载原图</a>
       </div>
     </div>
     <Notice :error="error" :message="message" />

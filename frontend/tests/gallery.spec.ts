@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises'
 import { test, expect, type Page } from '@playwright/test'
 
 const password = process.env.GALLERY_TEST_PASSWORD || 'gallery-browser-test-26'
@@ -64,6 +65,12 @@ test('desktop creates, uploads, opens previews and downloads the original ZIP', 
   await page.emulateMedia({ colorScheme: 'dark' })
   await expect(page.locator('.viewer-stage img')).toHaveCSS('filter', 'brightness(0.68)')
   expect(originals).toEqual([])
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('link', { name: '下载原图', exact: true }).click(),
+  ])
+  expect(download.suggestedFilename()).toBe('桌面原图.png')
+  expect(await readFile((await download.path())!)).toEqual(image)
   await page.getByRole('button', { name: '查看原图' }).click()
   await expect.poll(() => originals.length).toBe(1)
   await page.reload()
@@ -184,6 +191,21 @@ test('the public portfolio follows system appearance and opens an accessible lig
     await expect(lightbox).toHaveCSS('background-color', 'rgb(255, 255, 255)')
     await expect(lightbox.locator('img.is-ready')).toBeVisible()
     await expect(lightbox.locator('img.is-ready')).toHaveCSS('filter', 'none')
+    const openedUrl = visitor.url()
+    const displayUrl = await lightbox.locator('img.is-ready').evaluate(img => (img as HTMLImageElement).currentSrc)
+    const blockedTransfer = (route: import('@playwright/test').Route) => route.abort()
+    await visitor.route(displayUrl, blockedTransfer)
+    await lightbox.getByRole('button', { name: '下载照片' }).click()
+    await expect(lightbox.getByText('下载失败，请重试。')).toBeVisible()
+    await visitor.unroute(displayUrl, blockedTransfer)
+    const [previewDownload] = await Promise.all([
+      visitor.waitForEvent('download'),
+      lightbox.getByRole('button', { name: '下载照片' }).click(),
+    ])
+    const displayedPhoto = await visitor.request.get(displayUrl)
+    expect(previewDownload.suggestedFilename()).toMatch(/\.(jpg|png|webp|avif)$/)
+    expect(await readFile((await previewDownload.path())!)).toEqual(await displayedPhoto.body())
+    await expect(visitor).toHaveURL(openedUrl)
     await lightbox.getByRole('button', { name: '关闭查看器' }).click()
     await expect(visitor).toHaveURL(/\/$/)
     await expect(visitor.getByText('未公开的手稿')).toHaveCount(0)
@@ -204,6 +226,28 @@ test('the public portfolio follows system appearance and opens an accessible lig
     const albumScroll = await visitor.evaluate(() => window.scrollY)
     await albumTile.click()
     await expect(lightbox.locator('img.is-ready')).toBeVisible()
+    if (info.project.name === 'mobile') {
+      const stage = lightbox.locator('.lightbox-stage')
+      const track = lightbox.locator('.lightbox-track')
+      const nextSlide = lightbox.locator('.lightbox-slide[aria-hidden="true"] img.is-visible')
+      await expect(nextSlide).toHaveCount(1)
+      const neighbor = await nextSlide.elementHandle()
+      await stage.evaluate(element => {
+        // WebKit's Playwright touchscreen can only tap. Drive pointer sequences directly.
+        element.setPointerCapture = () => {}
+      })
+      const touch = { pointerId: 1, pointerType: 'touch', button: 0, clientY: 145, bubbles: true }
+      await stage.dispatchEvent('pointerdown', { ...touch, clientX: 240 })
+      await stage.dispatchEvent('pointermove', { ...touch, clientX: 80 })
+      await expect.poll(() => track.evaluate(element => new DOMMatrix(getComputedStyle(element).transform).m41)).toBe(-160)
+      expect(new URL(visitor.url()).searchParams.get('photo')).toBe(publicAlbum.imageId)
+      await stage.dispatchEvent('pointerup', { ...touch, clientX: 80 })
+      await expect.poll(() => new URL(visitor.url()).searchParams.get('photo')).toBe(portraitId)
+      await expect(lightbox.locator('img.is-ready')).toBeVisible()
+      expect(await lightbox.locator('img.is-ready').evaluate((img, preloaded) => img === preloaded, neighbor)).toBe(true)
+      await lightbox.getByRole('button', { name: '上一张' }).click()
+      await expect.poll(() => new URL(visitor.url()).searchParams.get('photo')).toBe(publicAlbum.imageId)
+    }
     await lightbox.getByRole('button', { name: '放大' }).click()
     await expect(lightbox.getByRole('button', { name: '适合屏幕' })).toHaveAttribute('aria-pressed', 'true')
     await visitor.keyboard.press('ArrowRight')

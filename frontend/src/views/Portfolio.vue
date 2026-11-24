@@ -24,12 +24,6 @@ const selection = computed(() => galleryPhoto(route))
 const selectedIndex = computed(() => isWorks.value && selection.value ? works.value.findIndex(
   item => item.id === selection.value?.imageId && item.album_id === selection.value?.albumId,
 ) : -1)
-const adjacent = computed(() => {
-  const index = selectedIndex.value
-  if (index < 0) return undefined
-  function refFor(work?: Work) { return work ? { imageId: work.id, albumId: work.album_id } : undefined }
-  return { previous: refFor(works.value[index - 1]), next: refFor(works.value[index + 1]) }
-})
 const featured = computed(() => {
   const covers = collections.value.flatMap(collection => collection.covers)
     .filter(work => media(work, true).src)
@@ -139,5 +133,5 @@ onUnmounted(() => requests?.abort())
     <div v-else-if="!works.length && !error" class="portfolio-empty"><ImageIcon :size="28" :stroke-width="1.2" aria-hidden="true" /><p>暂时还没有公开作品。</p></div>
     <div v-if="cursor || error" class="portfolio-more"><SButton variant="secondary" :loading="loading" @click="load(Boolean(cursor))">{{ error ? '重试' : '加载更多' }}</SButton></div>
   </section>
-  <PublicLightbox v-if="selection" :selection="selection" :adjacent="adjacent" />
+  <PublicLightbox v-if="selection" :selection="selection" :photos="isWorks ? works : featured ? [featured] : undefined" :follow-list-order="isWorks" />
 </template>

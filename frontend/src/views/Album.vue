@@ -325,5 +325,5 @@ onUnmounted(() => { controller?.abort(); mediaQuery.removeEventListener('change'
       </div>
     </SDialog>
   </section>
-  <PublicLightbox v-if="selection" :selection="selection" />
+  <PublicLightbox v-if="selection" :selection="selection" :photos="images" />
 </template>
